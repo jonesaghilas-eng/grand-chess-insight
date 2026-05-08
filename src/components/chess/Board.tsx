@@ -34,7 +34,7 @@ export function Board({
           darkSquareNotationStyle: { color: "var(--color-board-light)", fontFamily: "var(--font-mono)", fontSize: 10 },
           lightSquareNotationStyle: { color: "var(--color-board-dark)", fontFamily: "var(--font-mono)", fontSize: 10 },
           boardStyle: { borderRadius: "6px" },
-          arrowOptions: { color: "var(--color-gold)", opacity: 0.85 } as never,
+          arrowOptions: { color: "#c9a84c", opacity: 0.85 } as never,
           onPieceDrop: onDrop,
         } as never}
       />

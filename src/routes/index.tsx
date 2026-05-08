@@ -234,7 +234,7 @@ function TutorPage() {
       const probe = new Chess(viewGame.fen());
       const m = probe.move(currentAnnot.betterMove);
       if (!m) return [];
-      return [{ startSquare: m.from, endSquare: m.to, color: "var(--color-gold)" }];
+      return [{ startSquare: m.from, endSquare: m.to, color: "#c9a84c" }];
     } catch { return []; }
   }, [currentAnnot, viewGame, viewPly]);
 
