@@ -1,151 +1,203 @@
+// Server functions: the LLM is now a TRANSLATOR, not an engine.
+// Stockfish (client-side) provides ground truth; this layer renders that
+// truth into elite-pedagogical coaching, retrieving theory from the bank.
+
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const MODEL = "google/gemini-3-flash-preview";
 
-async function callAI(body: any) {
+async function callAI(body: any, opts: { timeoutMs?: number } = {}) {
   const key = process.env.LOVABLE_API_KEY;
   if (!key) throw new Error("LOVABLE_API_KEY not configured");
-  const res = await fetch(GATEWAY, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODEL, ...body }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    if (res.status === 429) throw new Error("Rate limit reached. Please wait a moment.");
-    if (res.status === 402) throw new Error("AI credits exhausted. Add credits in Settings → Workspace → Usage.");
-    throw new Error(`AI gateway error ${res.status}: ${text.slice(0, 200)}`);
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 15000);
+  try {
+    const res = await fetch(GATEWAY, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: MODEL, ...body }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      if (res.status === 429) throw new Error("Rate limit reached. Please wait a moment.");
+      if (res.status === 402) throw new Error("AI credits exhausted.");
+      throw new Error(`AI gateway error ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return res.json();
+  } finally {
+    clearTimeout(t);
   }
-  return res.json();
 }
 
-const positionSchema = z.object({
-  fen: z.string(),
-  pgn: z.string(),
-  lastMove: z.string().optional(),
-  legalMoves: z.array(z.string()),
-  userColor: z.enum(["w", "b"]),
-  difficulty: z.enum(["beginner", "intermediate", "advanced", "master"]).default("intermediate"),
+const lineSchema = z.object({
+  multipv: z.number(),
+  scoreCp: z.number().nullable(),
+  mate: z.number().nullable(),
+  pvSan: z.array(z.string()), // PV converted to SAN before sending
 });
 
-/** AI selects its next move + gives a short reason for the player. */
-export const getAIMove = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => positionSchema.parse(d))
-  .handler(async ({ data }) => {
-    const strength = {
-      beginner: "Play at ~1000 elo. Make natural developing moves; sometimes miss tactics.",
-      intermediate: "Play at ~1600 elo. Solid principles, occasional tactical oversights.",
-      advanced: "Play at ~2000 elo. Strong tactics and strategy.",
-      master: "Play at ~2400 elo. Near-flawless decisions.",
-    }[data.difficulty];
-
-    const system = `You are a chess engine + tutor. ${strength}
-You MUST respond with valid JSON only (no markdown, no fences):
-{"move":"<one move from legalMoves in SAN>","intent":"<one short sentence: what plan you are following>"}
-Pick exactly one move from the provided legal moves list. Never invent moves.`;
-
-    const user = `Position FEN: ${data.fen}
-PGN so far: ${data.pgn || "(empty)"}
-You play: ${data.userColor === "w" ? "Black" : "White"}
-Legal moves (SAN): ${data.legalMoves.join(", ")}
-Choose your move and state your intent.`;
-
-    const json = await callAI({
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      response_format: { type: "json_object" },
-    });
-
-    const content = json.choices?.[0]?.message?.content ?? "{}";
-    let parsed: { move: string; intent: string };
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      parsed = { move: data.legalMoves[0], intent: "Developing naturally." };
-    }
-    if (!data.legalMoves.includes(parsed.move)) {
-      parsed.move = data.legalMoves[0];
-      parsed.intent = "Falling back to a safe legal move.";
-    }
-    return parsed;
-  });
-
-const annotateSchema = z.object({
+const translateSchema = z.object({
   fenBefore: z.string(),
   fenAfter: z.string(),
   pgn: z.string(),
-  userMove: z.string(),
+  userMove: z.string(), // SAN
   userColor: z.enum(["w", "b"]),
-  legalMovesBefore: z.array(z.string()),
+  evalBeforeCp: z.number().nullable(),  // engine eval of fenBefore from user POV (centipawns)
+  evalAfterCp: z.number().nullable(),   // engine eval of fenAfter from opp POV; we'll flip to user POV
+  topLines: z.array(lineSchema).max(5),
+  features: z.object({
+    phase: z.enum(["opening", "middlegame", "endgame"]),
+    motifs: z.array(z.string()),
+    hangingPieces: z.array(z.object({ square: z.string(), piece: z.string(), color: z.enum(["w","b"]) })),
+    materialBalance: z.number(),
+    openingName: z.string().optional(),
+  }),
+  principles: z.array(z.object({ id: z.string(), text: z.string(), source: z.string().optional() })).max(4),
+  level: z.enum(["beginner", "intermediate", "advanced", "master"]),
+  opponentBestReplySan: z.string().optional(), // best engine reply, SAN
+  threeMoveLineSan: z.array(z.string()).optional(), // first 3 plies of opponent's plan
 });
 
-/** Pedagogical annotation of the user's last move. */
-export const annotateMove = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => annotateSchema.parse(d))
-  .handler(async ({ data }) => {
-    const system = `You are a world-class chess coach (Magnus-level pedagogy). For the user's last move, return JSON only:
-{
-  "quality": "brilliant" | "great" | "good" | "inaccuracy" | "mistake" | "blunder",
-  "evalDelta": <number, your estimated centipawn change for the player, negative = worse for them>,
-  "comment": "<2-3 sentences explaining WHAT happened and WHY in plain language>",
-  "betterMove": "<a stronger candidate move in SAN, or empty string if move was best>",
-  "betterIdea": "<one sentence: the idea behind the better move, or empty>",
-  "opponentThreats": ["<short threat 1>", "<short threat 2>"],
-  "plan": "<one sentence: what the player should aim for next>"
+function classifyQuality(deltaCp: number, mateSwing: boolean): string {
+  if (mateSwing && deltaCp < 0) return "blunder";
+  if (deltaCp >= 100) return "brilliant";
+  if (deltaCp >= 30) return "great";
+  if (deltaCp >= -20) return "good";
+  if (deltaCp >= -80) return "inaccuracy";
+  if (deltaCp >= -200) return "mistake";
+  return "blunder";
 }
-Be concrete: name pieces, squares, tactical motifs (pin, fork, skewer, discovered attack, weak king), and strategic themes (space, weak squares, pawn structure, king safety). Never invent moves not in the position.`;
 
-    const user = `User plays: ${data.userColor === "w" ? "White" : "Black"}
-Position before move (FEN): ${data.fenBefore}
-Legal moves that were available: ${data.legalMovesBefore.join(", ")}
-User played: ${data.userMove}
-Position after move (FEN): ${data.fenAfter}
-Game PGN: ${data.pgn}`;
+/** Translate raw engine analysis + extracted features into a didactic coaching object. */
+export const translateAnalysis = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => translateSchema.parse(d))
+  .handler(async ({ data }) => {
+    // Compute eval delta from user's POV (positive = user better)
+    const before = data.evalBeforeCp ?? 0;
+    // evalAfterCp arrives from opponent POV; flip
+    const afterFromUser = data.evalAfterCp == null ? before : -data.evalAfterCp;
+    const deltaCp = afterFromUser - before;
+    const wasTopLine = data.topLines[0] && Math.abs(deltaCp) <= 10;
+    const quality = wasTopLine ? "great" : classifyQuality(deltaCp, false);
 
-    const json = await callAI({
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      response_format: { type: "json_object" },
-    });
+    // Better move = top line different from played, only if we actually lost ground
+    const top = data.topLines[0];
+    const betterMove = !wasTopLine && top?.pvSan?.[0] && top.pvSan[0] !== data.userMove ? top.pvSan[0] : "";
 
-    const content = json.choices?.[0]?.message?.content ?? "{}";
+    const principlesBlock = data.principles.length
+      ? data.principles.map((p) => `- (${p.id}${p.source ? `, ${p.source}` : ""}) ${p.text}`).join("\n")
+      : "(no specific principles retrieved)";
+
+    const linesBlock = data.topLines.map((l, i) => {
+      const score = l.mate != null ? `mate in ${l.mate}` : `${(l.scoreCp ?? 0) / 100 >= 0 ? "+" : ""}${((l.scoreCp ?? 0) / 100).toFixed(2)}`;
+      return `${i + 1}. ${l.pvSan.slice(0, 5).join(" ")}  [${score}]`;
+    }).join("\n");
+
+    const system = `You are an elite chess coach in the tradition of Dvoretsky, Aagaard, and Silman. Your job is NOT to evaluate — Stockfish has done that. Your job is to TRANSLATE engine truth into clear, human, didactic coaching that makes the player stronger.
+
+Voice & personality:
+- Warm but precise. No filler ("Great job!"), no hedging ("might be"). Concrete.
+- Name pieces and squares. Speak in chess vocabulary the player can grow into.
+- One vivid sentence > three vague ones.
+- When you cite a principle, weave it in — never quote it verbatim like a textbook.
+- Adapt to player level (${data.level}): more concrete tactics for beginners, more nuance for masters.
+
+Return JSON ONLY (no markdown), matching this exact shape:
+{
+  "headline": "<short verdict, one phrase, e.g. 'A solid developing move' or 'Drops the e5 pawn'>",
+  "narrative": "<2–4 sentences: what the move does, why it works or doesn't, naming squares and pieces>",
+  "threeMovesAhead": "<one sentence forward-looking: what the opponent's best plan looks like over the next 1–3 moves; if a forcing line exists, give it>",
+  "alternatives": [
+    { "san": "<SAN>", "why": "<one sentence>" },
+    { "san": "<SAN>", "why": "<one sentence>" }
+  ],
+  "referencedPrinciple": "<short attribution like 'Nimzowitsch — prophylaxis' or empty string>",
+  "personaTone": "<one of: pleased, neutral, concerned, worried, impressed>"
+}`;
+
+    const user = `LEVEL: ${data.level}
+PHASE: ${data.features.phase} (move ${Math.ceil((data.pgn.split(/\s+/).length) / 3)})
+${data.features.openingName ? `OPENING: ${data.features.openingName}` : ""}
+USER COLOR: ${data.userColor === "w" ? "White" : "Black"}
+USER PLAYED: ${data.userMove}
+
+ENGINE LINES (from before user's move, side to move = user):
+${linesBlock || "(no lines)"}
+USER MOVE EVAL DELTA: ${deltaCp} centipawns (negative = worse for user)
+QUALITY (pre-classified): ${quality}
+
+POSITION FEATURES:
+- motifs: ${data.features.motifs.join(", ")}
+- material balance (+ = white): ${data.features.materialBalance}
+- hanging pieces: ${data.features.hangingPieces.length ? data.features.hangingPieces.map((h) => `${h.color}${h.piece}@${h.square}`).join(", ") : "none"}
+${data.opponentBestReplySan ? `- opponent's best reply (engine): ${data.opponentBestReplySan}` : ""}
+${data.threeMoveLineSan?.length ? `- forcing continuation: ${data.threeMoveLineSan.join(" ")}` : ""}
+
+RELEVANT PRINCIPLES (use 0–1, weave in naturally):
+${principlesBlock}
+
+POSITION FEN: ${data.fenAfter}`;
+
+    let parsed: any = null;
     try {
-      return JSON.parse(content);
+      const json = await callAI({
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        response_format: { type: "json_object" },
+      }, { timeoutMs: 12000 });
+      parsed = JSON.parse(json.choices?.[0]?.message?.content ?? "{}");
     } catch {
-      return {
-        quality: "good",
-        evalDelta: 0,
-        comment: "Move played.",
-        betterMove: "",
-        betterIdea: "",
-        opponentThreats: [],
-        plan: "",
-      };
+      parsed = null;
     }
+
+    return {
+      quality,
+      evalDelta: deltaCp,
+      headline: parsed?.headline ?? (quality === "blunder" ? "A serious slip" : quality === "great" ? "A strong move" : "Move played"),
+      narrative: parsed?.narrative ?? "The coach is catching up — try the next move.",
+      threeMovesAhead: parsed?.threeMovesAhead ?? "",
+      alternatives: Array.isArray(parsed?.alternatives) ? parsed.alternatives.slice(0, 3) : (betterMove ? [{ san: betterMove, why: "engine-preferred" }] : []),
+      betterMove,
+      referencedPrinciple: parsed?.referencedPrinciple ?? "",
+      personaTone: parsed?.personaTone ?? moodFromQuality(quality),
+      opponentThreats: data.opponentBestReplySan ? [data.opponentBestReplySan] : [],
+    };
   });
+
+function moodFromQuality(q: string): string {
+  if (q === "brilliant") return "impressed";
+  if (q === "great") return "pleased";
+  if (q === "good") return "neutral";
+  if (q === "inaccuracy") return "concerned";
+  if (q === "mistake") return "concerned";
+  if (q === "blunder") return "worried";
+  return "neutral";
+}
 
 const chatSchema = z.object({
   fen: z.string(),
   pgn: z.string(),
   question: z.string().min(1).max(1000),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).max(20),
+  topLines: z.array(z.object({ pvSan: z.array(z.string()), scoreCp: z.number().nullable(), mate: z.number().nullable() })).max(5).optional(),
 });
 
-/** Free-form chat about the current position. */
 export const chatAboutPosition = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => chatSchema.parse(d))
   .handler(async ({ data }) => {
-    const system = `You are a patient, expert chess coach. Always ground answers in the given FEN/PGN.
-Use chess notation, name squares and pieces, mention concrete variations when helpful.
-Use markdown lists when listing ideas. Keep answers focused and pedagogical.`;
+    const linesBlock = data.topLines?.length
+      ? "Engine top lines:\n" + data.topLines.map((l, i) =>
+          `${i + 1}. ${l.pvSan.slice(0, 5).join(" ")} [${l.mate != null ? `mate ${l.mate}` : `${((l.scoreCp ?? 0) / 100).toFixed(2)}`}]`).join("\n")
+      : "";
+    const system = `You are a patient elite chess coach. You are GROUNDED in the engine's evaluation — never contradict it. Speak in concrete chess language: name squares, pieces, motifs. Use markdown lists when listing ideas.`;
     const user = `FEN: ${data.fen}
 PGN: ${data.pgn}
+${linesBlock}
 
 Question: ${data.question}`;
     const json = await callAI({
@@ -154,7 +206,7 @@ Question: ${data.question}`;
         ...data.history,
         { role: "user", content: user },
       ],
-    });
+    }, { timeoutMs: 20000 });
     return { reply: json.choices?.[0]?.message?.content ?? "I'm not sure." };
   });
 
@@ -166,42 +218,97 @@ const reviewSchema = z.object({
     moveNumber: z.number(),
     san: z.string(),
     quality: z.string(),
+    evalDelta: z.number().optional(),
   })),
 });
 
-/** Full game review summary. */
 export const reviewGame = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => reviewSchema.parse(d))
   .handler(async ({ data }) => {
-    const system = `You are a chess coach delivering a full post-game review. Return JSON only:
+    // Compute accuracy server-side from per-move evalDeltas (stable, not LLM-guessed).
+    const userMoves = data.annotations;
+    const accuracy = computeAccuracy(userMoves);
+    const counts = userMoves.reduce<Record<string, number>>((a, m) => { a[m.quality] = (a[m.quality] || 0) + 1; return a; }, {});
+
+    const system = `You are an elite chess coach delivering a post-game review. Be concrete, kind, and specific. Reference move numbers and motifs. Return JSON ONLY:
 {
-  "headline": "<one sentence verdict>",
-  "accuracy": <0-100 estimated accuracy for the user>,
-  "phases": {
-    "opening": "<2 sentences>",
-    "middlegame": "<2 sentences>",
-    "endgame": "<2 sentences, or 'Game ended before endgame.'>"
-  },
-  "keyMoments": ["<move N: what happened>", "..."],
+  "headline": "<one-sentence verdict>",
+  "phases": { "opening": "<2 sentences>", "middlegame": "<2 sentences>", "endgame": "<2 sentences or 'Game ended before endgame.'>" },
+  "keyMoments": ["Move N: <what happened, what to learn>", "..."],
   "strengths": ["<short>", "..."],
-  "improvements": ["<concrete, actionable>", "..."],
-  "studySuggestions": ["<concrete topic / pattern>", "..."]
+  "improvements": ["<concrete pattern to drill>", "..."],
+  "studySuggestions": ["<topic / pattern>", "..."]
 }`;
     const user = `User played: ${data.userColor === "w" ? "White" : "Black"}
 Result: ${data.result}
+Accuracy (computed): ${accuracy}%
+Quality counts: ${JSON.stringify(counts)}
 PGN: ${data.pgn}
-Move qualities (user moves only): ${JSON.stringify(data.annotations)}`;
+Per-move qualities: ${JSON.stringify(userMoves)}`;
+    let parsed: any = {};
+    try {
+      const json = await callAI({
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        response_format: { type: "json_object" },
+      }, { timeoutMs: 25000 });
+      parsed = JSON.parse(json.choices?.[0]?.message?.content ?? "{}");
+    } catch {}
+    return {
+      accuracy,
+      headline: parsed.headline ?? "Game complete.",
+      phases: parsed.phases ?? {},
+      keyMoments: parsed.keyMoments ?? [],
+      strengths: parsed.strengths ?? [],
+      improvements: parsed.improvements ?? [],
+      studySuggestions: parsed.studySuggestions ?? [],
+    };
+  });
 
-    const json = await callAI({
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      response_format: { type: "json_object" },
-    });
-    const content = json.choices?.[0]?.message?.content ?? "{}";
-    try { return JSON.parse(content); }
-    catch {
-      return { headline: "Game complete.", accuracy: 50, phases: {}, keyMoments: [], strengths: [], improvements: [], studySuggestions: [] };
+function computeAccuracy(moves: { evalDelta?: number; quality: string }[]): number {
+  if (moves.length === 0) return 100;
+  let total = 0;
+  for (const m of moves) {
+    const d = Math.abs(m.evalDelta ?? qualityToDelta(m.quality));
+    // Lichess-style accuracy curve approximation: 100 * exp(-0.004 * d)
+    total += 100 * Math.exp(-0.004 * d);
+  }
+  return Math.round(total / moves.length);
+}
+
+function qualityToDelta(q: string): number {
+  return ({ brilliant: 0, great: 5, good: 15, inaccuracy: 60, mistake: 140, blunder: 300 } as Record<string, number>)[q] ?? 30;
+}
+
+/** ElevenLabs TTS — returns base64 mp3. Voice fallback to "Charlie" (warm coach). */
+const ttsSchema = z.object({
+  text: z.string().min(1).max(2000),
+  voiceId: z.string().default("IKne3meq5aSn9XLyUdCD"), // Charlie
+});
+
+export const speakText = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => ttsSchema.parse(d))
+  .handler(async ({ data }) => {
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) throw new Error("ELEVENLABS_API_KEY not configured");
+    const res = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${data.voiceId}/stream?output_format=mp3_44100_128`,
+      {
+        method: "POST",
+        headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: data.text,
+          model_id: "eleven_turbo_v2_5",
+          voice_settings: { stability: 0.45, similarity_boost: 0.75, style: 0.35, use_speaker_boost: true, speed: 1.0 },
+        }),
+      }
+    );
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`TTS failed [${res.status}]: ${t.slice(0, 200)}`);
     }
+    const buf = await res.arrayBuffer();
+    return { audioBase64: Buffer.from(buf).toString("base64") };
   });
