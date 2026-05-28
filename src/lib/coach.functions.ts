@@ -59,6 +59,8 @@ const translateSchema = z.object({
   level: z.enum(["beginner", "intermediate", "advanced", "master"]),
   opponentBestReplySan: z.string().optional(), // best engine reply, SAN
   threeMoveLineSan: z.array(z.string()).optional(), // first 3 plies of opponent's plan
+  recurringWeaknesses: z.array(z.string()).max(6).optional(),
+  recentInsights: z.array(z.string()).max(4).optional(),
 });
 
 function classifyQuality(deltaCp: number, mateSwing: boolean): string {
@@ -138,6 +140,9 @@ ${data.threeMoveLineSan?.length ? `- forcing continuation: ${data.threeMoveLineS
 
 RELEVANT PRINCIPLES (use 0–1, weave in naturally):
 ${principlesBlock}
+
+${data.recurringWeaknesses?.length ? `PLAYER'S RECURRING WEAKNESSES (reference subtly when relevant, don't lecture): ${data.recurringWeaknesses.join(", ")}` : ""}
+${data.recentInsights?.length ? `RECENT COACHING POINTS (avoid repeating verbatim):\n- ${data.recentInsights.join("\n- ")}` : ""}
 
 POSITION FEN: ${data.fenAfter}`;
 
