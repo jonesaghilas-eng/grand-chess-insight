@@ -5,7 +5,7 @@ import { Avatar, type AvatarMood } from "@/components/chess/Avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Loader2, Mic, MicOff, Volume2, Play, X, BookOpen, ArrowRight, Sparkles, AlertTriangle, Lightbulb } from "lucide-react";
+import { Send, Loader2, Mic, MicOff, Volume2, Play, X, BookOpen, ArrowRight, Sparkles, Lightbulb } from "lucide-react";
 import { useMic } from "@/hooks/useMic";
 import { cn } from "@/lib/utils";
 
