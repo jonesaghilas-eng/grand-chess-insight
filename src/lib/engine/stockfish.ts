@@ -4,15 +4,15 @@
 export type EngineLine = {
   multipv: number;
   depth: number;
-  scoreCp: number | null; // centipawns from side-to-move POV
-  mate: number | null;    // moves to mate (signed)
-  pv: string[];           // UCI moves
+  scoreCp: number | null;
+  mate: number | null;
+  pv: string[];
 };
 
 export type AnalysisResult = {
   fen: string;
   depth: number;
-  bestmove: string | null; // UCI
+  bestmove: string | null;
   lines: EngineLine[];
 };
 
@@ -37,6 +37,7 @@ class StockfishEngine {
   private worker: Worker;
   private listeners: Array<(line: string) => void> = [];
   private busy: Promise<void> = Promise.resolve();
+  private currentSearchToken = 0;
 
   private constructor(worker: Worker) {
     this.worker = worker;
@@ -56,9 +57,7 @@ class StockfishEngine {
 
   private addListener(fn: (l: string) => void) {
     this.listeners.push(fn);
-    return () => {
-      this.listeners = this.listeners.filter((x) => x !== fn);
-    };
+    return () => { this.listeners = this.listeners.filter((x) => x !== fn); };
   }
 
   private send(cmd: string, until: (line: string) => boolean): Promise<string[]> {
@@ -66,13 +65,18 @@ class StockfishEngine {
       const collected: string[] = [];
       const off = this.addListener((line) => {
         collected.push(line);
-        if (until(line)) {
-          off();
-          resolve(collected);
-        }
+        if (until(line)) { off(); resolve(collected); }
       });
       this.worker.postMessage(cmd);
     });
+  }
+
+  /** Cancel any in-flight search. */
+  async cancel(): Promise<void> {
+    this.currentSearchToken++;
+    this.worker.postMessage("stop");
+    // Drain to readyok so the next command starts clean.
+    try { await this.send("isready", (l) => l === "readyok"); } catch { /* */ }
   }
 
   /** Serialize commands so concurrent calls don't interleave. */
@@ -81,14 +85,10 @@ class StockfishEngine {
     let release: () => void;
     this.busy = new Promise((r) => (release = r));
     await prev;
-    try {
-      return await fn();
-    } finally {
-      release!();
-    }
+    try { return await fn(); }
+    finally { release!(); }
   }
 
-  /** Pick a move at a given Stockfish skill level (0–20). */
   bestMove(fen: string, opts: { skillLevel: number; movetimeMs: number }): Promise<string> {
     return this.run(async () => {
       this.worker.postMessage("ucinewgame");
@@ -103,17 +103,19 @@ class StockfishEngine {
     });
   }
 
-  /** Multi-PV analysis at full strength for coaching. */
   analyze(fen: string, opts: { depth: number; multiPV: number }): Promise<AnalysisResult> {
     return this.run(async () => {
+      const myToken = ++this.currentSearchToken;
       this.worker.postMessage("ucinewgame");
       this.worker.postMessage("setoption name Skill Level value 20");
       this.worker.postMessage(`setoption name MultiPV value ${opts.multiPV}`);
       await this.send("isready", (l) => l === "readyok");
+      if (myToken !== this.currentSearchToken) {
+        return { fen, depth: opts.depth, bestmove: null, lines: [] };
+      }
       this.worker.postMessage(`position fen ${fen}`);
       const out = await this.send(`go depth ${opts.depth}`, (l) => l.startsWith("bestmove"));
 
-      // Keep the deepest info per multipv index
       const byPv = new Map<number, EngineLine>();
       let bestmove: string | null = null;
 
