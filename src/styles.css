@@ -74,9 +74,11 @@
   --input: oklch(0.88 0.012 85);
   --ring: var(--gold);
 
-  /* Board */
-  --board-light: oklch(0.92 0.025 85);
-  --board-dark: oklch(0.55 0.05 50);
+  /* Board — warm ivory + walnut, like a real wood set */
+  --board-light: oklch(0.93 0.022 82);
+  --board-dark: oklch(0.46 0.052 52);
+  --board-highlight: oklch(0.78 0.14 80 / 0.42);
+  --board-threat: oklch(0.58 0.21 25 / 0.45);
 }
 
 .dark {
@@ -124,4 +126,33 @@
   .ink-shadow {
     box-shadow: 0 1px 0 oklch(0 0 0 / 0.04), 0 8px 24px -12px oklch(0 0 0 / 0.18);
   }
+  .frame-shadow {
+    box-shadow:
+      0 1px 0 oklch(0 0 0 / 0.04),
+      0 24px 40px -22px oklch(0 0 0 / 0.28),
+      inset 0 0 0 1px oklch(0.78 0.12 80 / 0.18);
+  }
+  .aura-ring {
+    position: relative;
+  }
+  .aura-ring::before {
+    content: "";
+    position: absolute;
+    inset: -8px;
+    border-radius: 9999px;
+    background: radial-gradient(circle, oklch(0.78 0.12 80 / 0.28), transparent 70%);
+    animation: caissa-aura 4.2s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 0;
+  }
+  @keyframes caissa-aura {
+    0%, 100% { opacity: 0.25; transform: scale(0.96); }
+    50%      { opacity: 0.6;  transform: scale(1.06); }
+  }
+  @keyframes caissa-pop {
+    0%   { transform: scale(0.6); opacity: 0; }
+    60%  { transform: scale(1.05); opacity: 1; }
+    100% { transform: scale(1);    opacity: 1; }
+  }
+  .mood-fade { transition: opacity 280ms ease, transform 280ms ease; }
 }
