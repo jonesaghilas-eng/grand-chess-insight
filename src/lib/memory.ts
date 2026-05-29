@@ -68,4 +68,9 @@ export function recentPoints(n = 4): LearningPoint[] {
   return loadMemory().points.slice(0, n);
 }
 
+/** Most-recent coaching headlines so the LLM can avoid restating them. */
+export function recentHeadlines(n = 6): string[] {
+  return loadMemory().points.slice(0, n).map((p) => p.insight).filter(Boolean);
+}
+
 export function clearMemory() { saveMemory(empty()); }
