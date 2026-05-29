@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { chatAboutPosition } from "@/lib/coach.functions";
 import { Avatar, type AvatarMood } from "@/components/chess/Avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Loader2, Mic, MicOff, Volume2, Play, X, BookOpen, ArrowRight, Sparkles, Lightbulb } from "lucide-react";
+import { Send, Loader2, Mic, MicOff, Volume2, Play, X, BookOpen, Lightbulb, ChevronDown } from "lucide-react";
 import { useMic } from "@/hooks/useMic";
 import { cn } from "@/lib/utils";
 
@@ -19,21 +19,25 @@ export type CoachFeedItem = {
   headline?: string;
   narrative?: string;
   threeMovesAhead?: string;
+  deepen?: string;             // long-form theory / positional read
+  captionedPlies?: { san: string; caption: string }[]; // one caption per opponent ply
   alternatives?: { san: string; why: string }[];
   referencedPrinciple?: string;
-  threatLineSan?: string[];   // up to 3 SAN moves to animate as "what could happen"
-  threatFen?: string;          // FEN to start animating from
-  text?: string;               // for user/assistant/system/ai
+  threatLineSan?: string[];
+  threatFen?: string;
+  text?: string;
 };
 
 const QUALITY = {
-  brilliant: { label: "Brilliant", dot: "oklch(0.55 0.13 220)" },
-  great:     { label: "Great",     dot: "var(--success)" },
-  good:      { label: "Good",      dot: "var(--muted-foreground)" },
-  inaccuracy:{ label: "Inaccuracy",dot: "var(--warn)" },
-  mistake:   { label: "Mistake",   dot: "var(--warn)" },
-  blunder:   { label: "Blunder",   dot: "var(--destructive)" },
-} as Record<string, { label: string; dot: string }>;
+  brilliant: { label: "Brilliant", dot: "oklch(0.55 0.13 220)", bar: "oklch(0.55 0.13 220)" },
+  great:     { label: "Great",     dot: "var(--success)",        bar: "var(--success)" },
+  good:      { label: "Good",      dot: "var(--muted-foreground)", bar: "var(--muted-foreground)" },
+  inaccuracy:{ label: "Inaccuracy",dot: "var(--warn)",            bar: "var(--warn)" },
+  mistake:   { label: "Mistake",   dot: "var(--warn)",            bar: "var(--warn)" },
+  blunder:   { label: "Blunder",   dot: "var(--destructive)",     bar: "var(--destructive)" },
+} as Record<string, { label: string; dot: string; bar: string }>;
+
+const FEED_TAIL = 30;
 
 type Props = {
   feed: CoachFeedItem[];
@@ -44,6 +48,7 @@ type Props = {
   onSpeak: (text: string) => void;
   onPlayThreat: (item: CoachFeedItem) => void;
   threatPlayingId: string | null;
+  threatStep?: number;
   onAbortThreat: () => void;
   fen: string;
   pgn: string;
@@ -52,7 +57,7 @@ type Props = {
 
 export function UnifiedChat({
   feed, mood, speaking, voiceEnabled, onToggleVoice, onSpeak,
-  onPlayThreat, threatPlayingId, onAbortThreat,
+  onPlayThreat, threatPlayingId, threatStep, onAbortThreat,
   fen, pgn, coachThinking,
 }: Props) {
   const [items, setItems] = useState<CoachFeedItem[]>(feed);
@@ -64,9 +69,14 @@ export function UnifiedChat({
     onResult: (text) => { setInput((v) => (v ? v + " " : "") + text); },
   });
 
-  // Merge external feed (coach annotations) with locally tracked chat
   useEffect(() => { setItems(feed); }, [feed]);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [items, coachThinking, asking]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [items.length, coachThinking, asking]);
+
+  // Show only tail to keep long games snappy
+  const visible = useMemo(() => {
+    if (items.length <= FEED_TAIL) return { hidden: 0, list: items };
+    return { hidden: items.length - FEED_TAIL, list: items.slice(-FEED_TAIL) };
+  }, [items]);
 
   async function send() {
     const q = input.trim();
@@ -94,14 +104,14 @@ export function UnifiedChat({
   }
 
   return (
-    <div className="flex flex-col h-full bg-card border border-border rounded-lg ink-shadow overflow-hidden">
-      {/* Avatar header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-gradient-to-b from-paper-deep/40 to-transparent">
-        <Avatar mood={mood} speaking={speaking} size={56} name="Caïssa" />
+    <div className="flex flex-col h-full bg-card border border-border rounded-xl ink-shadow overflow-hidden">
+      {/* Sticky avatar header */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-gradient-to-b from-paper-deep/50 to-transparent backdrop-blur-md sticky top-0 z-10">
+        <Avatar mood={mood} speaking={speaking} size={52} />
         <div className="flex-1 min-w-0">
-          <div className="serif text-base leading-tight">Your coach</div>
+          <div className="serif text-base leading-tight">Caïssa</div>
           <div className="mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            {coachThinking ? "calculating…" : speaking ? "speaking" : mood}
+            {coachThinking ? "calculating" : speaking ? "speaking" : mood}
           </div>
         </div>
         <Button
@@ -118,13 +128,19 @@ export function UnifiedChat({
       {/* Feed */}
       <ScrollArea className="flex-1 min-h-0">
         <div className="px-3 py-3 space-y-2.5">
-          {items.length === 0 && (
-            <div className="text-center py-10 px-4 text-muted-foreground">
-              <Sparkles className="h-5 w-5 mx-auto opacity-60 mb-2" />
-              <p className="serif italic text-sm">Make a move. I'll explain what just happened — and what could happen next.</p>
+          {visible.hidden > 0 && (
+            <div className="text-center text-[10px] mono uppercase tracking-widest text-muted-foreground py-1">
+              {visible.hidden} earlier moves
             </div>
           )}
-          {items.map((it) => (
+          {items.length === 0 && (
+            <div className="text-center py-10 px-4 text-muted-foreground">
+              <p className="serif italic text-sm leading-relaxed">
+                Make a move.<br/>I'll explain what just happened — and what could happen next.
+              </p>
+            </div>
+          )}
+          {visible.list.map((it) => (
             <FeedRow
               key={it.id}
               item={it}
@@ -132,6 +148,7 @@ export function UnifiedChat({
               voiceEnabled={voiceEnabled}
               onPlayThreat={onPlayThreat}
               isPlayingThreat={threatPlayingId === it.id}
+              threatStep={threatPlayingId === it.id ? threatStep ?? 0 : 0}
               onAbortThreat={onAbortThreat}
             />
           ))}
@@ -149,8 +166,8 @@ export function UnifiedChat({
         </div>
       </ScrollArea>
 
-      {/* Composer */}
-      <div className="border-t border-border p-2 flex gap-2 items-center bg-card">
+      {/* Sticky composer */}
+      <div className="border-t border-border p-2 flex gap-2 items-center bg-card/95 backdrop-blur-md sticky bottom-0">
         {mic.supported && (
           <Button
             type="button"
@@ -167,7 +184,7 @@ export function UnifiedChat({
           value={input + (mic.interim ? ` ${mic.interim}` : "")}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") send(); }}
-          placeholder={mic.listening ? "Listening…" : "Ask anything about this position"}
+          placeholder={mic.listening ? "Listening…" : "Ask about this position"}
           disabled={asking}
           className="font-serif"
         />
@@ -180,18 +197,21 @@ export function UnifiedChat({
 }
 
 function FeedRow({
-  item, onSpeak, voiceEnabled, onPlayThreat, isPlayingThreat, onAbortThreat,
+  item, onSpeak, voiceEnabled, onPlayThreat, isPlayingThreat, threatStep, onAbortThreat,
 }: {
   item: CoachFeedItem;
   onSpeak: (text: string) => void;
   voiceEnabled: boolean;
   onPlayThreat: (item: CoachFeedItem) => void;
   isPlayingThreat: boolean;
+  threatStep: number;
   onAbortThreat: () => void;
 }) {
+  const [showDeepen, setShowDeepen] = useState(false);
+
   if (item.kind === "user") {
     return (
-      <div className="flex justify-end">
+      <div className="flex justify-end animate-in fade-in slide-in-from-right-2 duration-200">
         <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-foreground text-background px-3.5 py-2 text-sm leading-relaxed">
           {item.text}
         </div>
@@ -200,7 +220,7 @@ function FeedRow({
   }
   if (item.kind === "assistant") {
     return (
-      <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-muted px-3.5 py-2 text-sm leading-relaxed whitespace-pre-wrap">
+      <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-muted px-3.5 py-2 text-sm leading-relaxed whitespace-pre-wrap animate-in fade-in slide-in-from-left-2 duration-200">
         {item.text}
       </div>
     );
@@ -210,7 +230,7 @@ function FeedRow({
   }
   if (item.kind === "ai") {
     return (
-      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50 text-xs">
+      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/40 text-xs animate-in fade-in duration-200">
         <span className="mono text-[10px] uppercase tracking-widest text-muted-foreground">Opp</span>
         <span className="serif text-sm">{item.san}</span>
         <span className="text-muted-foreground italic text-[11px] truncate">{item.text}</span>
@@ -218,16 +238,20 @@ function FeedRow({
     );
   }
 
-  // Coach annotation
+  // Coach annotation — magazine card with severity ribbon
   const q = QUALITY[item.quality ?? "good"];
   const showThreatBtn = (item.quality === "blunder" || item.quality === "mistake") && (item.threatLineSan?.length ?? 0) > 0;
+  const hasDeepen = !!(item.deepen && item.deepen.length > 0);
+
   return (
-    <div className="rounded-xl border border-border bg-background/50 px-3.5 py-3 space-y-2 animate-in fade-in slide-in-from-bottom-1 duration-300">
+    <div className="relative rounded-xl border border-border bg-background/60 pl-4 pr-3.5 py-3 space-y-2 animate-in fade-in slide-in-from-bottom-1 duration-300 overflow-hidden">
+      {/* Severity ribbon */}
+      <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: q?.bar }} />
+
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2 min-w-0">
-          <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: q?.dot }} />
-          <span className="serif text-sm">{item.san}</span>
-          <span className="mono text-[10px] uppercase tracking-widest text-muted-foreground">{q?.label}</span>
+          <span className="serif text-base leading-none">{item.san}</span>
+          <span className="mono text-[10px] uppercase tracking-widest" style={{ color: q?.dot }}>{q?.label}</span>
         </div>
         {voiceEnabled && (
           <Button size="icon" variant="ghost" className="h-6 w-6 -my-1" onClick={() => onSpeak([item.headline, item.narrative].filter(Boolean).join(" "))}>
@@ -235,31 +259,40 @@ function FeedRow({
           </Button>
         )}
       </div>
-      {item.headline && <p className="serif text-[15px] leading-snug">{item.headline}</p>}
+      {item.headline && <p className="serif italic text-[15px] leading-snug text-foreground/95">{item.headline}</p>}
       {item.narrative && <p className="text-sm leading-relaxed text-foreground/85">{item.narrative}</p>}
 
       {showThreatBtn && !isPlayingThreat && (
         <button
           onClick={() => onPlayThreat(item)}
-          className="group w-full mt-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-destructive/40 bg-destructive/5 hover:bg-destructive/10 transition-colors text-left"
+          className="group w-full mt-1 flex items-center gap-2.5 px-3 py-2 rounded-lg border border-destructive/40 bg-destructive/5 hover:bg-destructive/10 hover:scale-[1.01] transition-all text-left"
         >
-          <span className="flex items-center justify-center h-6 w-6 rounded-full bg-destructive/80 text-destructive-foreground shrink-0 group-hover:scale-110 transition-transform">
-            <Play className="h-3 w-3 ml-0.5" />
+          <span className="flex items-center justify-center h-7 w-7 rounded-full bg-destructive text-destructive-foreground shrink-0 group-hover:scale-110 transition-transform shadow-md">
+            <Play className="h-3.5 w-3.5 ml-0.5" fill="currentColor" />
           </span>
           <div className="flex-1 min-w-0">
-            <div className="text-xs mono uppercase tracking-widest text-destructive">Watch what could happen</div>
+            <div className="text-[10px] mono uppercase tracking-widest text-destructive">Watch what could happen</div>
             <div className="text-[11px] text-muted-foreground truncate serif italic">{item.threatLineSan?.slice(0, 3).join(" ")}</div>
           </div>
-          <ArrowRight className="h-3 w-3 text-muted-foreground" />
         </button>
       )}
       {isPlayingThreat && (
-        <button
-          onClick={onAbortThreat}
-          className="w-full mt-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-foreground text-background text-xs mono uppercase tracking-widest animate-pulse"
-        >
-          <X className="h-3 w-3" /> Stop preview
-        </button>
+        <div className="mt-1 space-y-1.5 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5">
+          <div className="flex items-center justify-between">
+            <span className="mono text-[10px] uppercase tracking-widest text-destructive">
+              Step {Math.min(threatStep + 1, item.threatLineSan?.length ?? 0)} / {item.threatLineSan?.length ?? 0}
+            </span>
+            <button onClick={onAbortThreat} className="mono text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+              <X className="h-3 w-3" /> stop
+            </button>
+          </div>
+          {item.captionedPlies?.[threatStep] && (
+            <p className="text-xs leading-relaxed serif italic text-foreground/90 animate-in fade-in duration-200" key={threatStep}>
+              <span className="serif text-sm not-italic mr-1">{item.captionedPlies[threatStep].san}</span>
+              — {item.captionedPlies[threatStep].caption}
+            </p>
+          )}
+        </div>
       )}
 
       {item.threeMovesAhead && !showThreatBtn && (
@@ -279,6 +312,23 @@ function FeedRow({
               <span className="text-muted-foreground">— {a.why}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {hasDeepen && (
+        <div>
+          <button
+            onClick={() => setShowDeepen((v) => !v)}
+            className="text-[10px] mono uppercase tracking-widest text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors"
+          >
+            <ChevronDown className={cn("h-3 w-3 transition-transform", showDeepen && "rotate-180")} />
+            {showDeepen ? "Less" : "Read more"}
+          </button>
+          {showDeepen && (
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-foreground/80 font-serif border-l-2 border-accent/60 pl-3 animate-in fade-in slide-in-from-top-1 duration-200">
+              {item.deepen}
+            </p>
+          )}
         </div>
       )}
 
