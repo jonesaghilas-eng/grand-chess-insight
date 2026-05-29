@@ -61,6 +61,7 @@ const translateSchema = z.object({
   threeMoveLineSan: z.array(z.string()).optional(), // first 3 plies of opponent's plan
   recurringWeaknesses: z.array(z.string()).max(6).optional(),
   recentInsights: z.array(z.string()).max(4).optional(),
+  recentHeadlines: z.array(z.string()).max(6).optional(),
 });
 
 function classifyQuality(deltaCp: number, mateSwing: boolean): string {
@@ -106,19 +107,28 @@ Voice & personality:
 - One vivid sentence > three vague ones.
 - When you cite a principle, weave it in — never quote it verbatim like a textbook.
 - Adapt to player level (${data.level}): more concrete tactics for beginners, more nuance for masters.
+- HARD RULE — do not restate any of the player's recent coaching headlines (provided below). If the same idea applies, reference it as a callback ("same shape as before — …") rather than repeating the phrase.
+- When a recurring weakness re-appears in the position, name it explicitly as a callback so the player feels the through-line across games.
 
 Return JSON ONLY (no markdown), matching this exact shape:
 {
-  "headline": "<short verdict, one phrase, e.g. 'A solid developing move' or 'Drops the e5 pawn'>",
+  "headline": "<short verdict, one phrase>",
   "narrative": "<2–4 sentences: what the move does, why it works or doesn't, naming squares and pieces>",
-  "threeMovesAhead": "<one sentence forward-looking: what the opponent's best plan looks like over the next 1–3 moves; if a forcing line exists, give it>",
+  "threeMovesAhead": "<one sentence forward-looking plan>",
+  "deepen": "<2–4 sentences of deeper chess theory: positional assessment, named principle and its source (e.g. 'Nimzowitsch, My System — prophylaxis'), and how the forcing line below punishes the move; this is shown on demand>",
+  "captionedPlies": [
+    { "san": "<SAN of opp ply 1>", "caption": "<one short sentence on what this move accomplishes>" },
+    { "san": "<SAN of opp ply 2>", "caption": "<...>" },
+    { "san": "<SAN of opp ply 3>", "caption": "<...>" }
+  ],
   "alternatives": [
     { "san": "<SAN>", "why": "<one sentence>" },
     { "san": "<SAN>", "why": "<one sentence>" }
   ],
   "referencedPrinciple": "<short attribution like 'Nimzowitsch — prophylaxis' or empty string>",
   "personaTone": "<one of: pleased, neutral, concerned, worried, impressed>"
-}`;
+}
+If there is no forcing 3-ply line, return captionedPlies as an empty array.`;
 
     const user = `LEVEL: ${data.level}
 PHASE: ${data.features.phase} (move ${Math.ceil((data.pgn.split(/\s+/).length) / 3)})
