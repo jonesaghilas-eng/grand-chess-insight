@@ -153,6 +153,7 @@ ${principlesBlock}
 
 ${data.recurringWeaknesses?.length ? `PLAYER'S RECURRING WEAKNESSES (reference subtly when relevant, don't lecture): ${data.recurringWeaknesses.join(", ")}` : ""}
 ${data.recentInsights?.length ? `RECENT COACHING POINTS (avoid repeating verbatim):\n- ${data.recentInsights.join("\n- ")}` : ""}
+${data.recentHeadlines?.length ? `RECENT HEADLINES (do not restate; if relevant, reference as callback):\n- ${data.recentHeadlines.join("\n- ")}` : ""}
 
 POSITION FEN: ${data.fenAfter}`;
 
@@ -176,6 +177,10 @@ POSITION FEN: ${data.fenAfter}`;
       headline: parsed?.headline ?? (quality === "blunder" ? "A serious slip" : quality === "great" ? "A strong move" : "Move played"),
       narrative: parsed?.narrative ?? "The coach is catching up — try the next move.",
       threeMovesAhead: parsed?.threeMovesAhead ?? "",
+      deepen: typeof parsed?.deepen === "string" ? parsed.deepen : "",
+      captionedPlies: Array.isArray(parsed?.captionedPlies) ? parsed.captionedPlies.slice(0, 3).map((c: any) => ({
+        san: String(c?.san ?? ""), caption: String(c?.caption ?? ""),
+      })).filter((c: any) => c.san) : [],
       alternatives: Array.isArray(parsed?.alternatives) ? parsed.alternatives.slice(0, 3) : (betterMove ? [{ san: betterMove, why: "engine-preferred" }] : []),
       betterMove,
       referencedPrinciple: parsed?.referencedPrinciple ?? "",
