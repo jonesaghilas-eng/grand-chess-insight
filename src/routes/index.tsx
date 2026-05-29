@@ -12,16 +12,17 @@ import { UnifiedChat, type CoachFeedItem } from "@/components/chess/UnifiedChat"
 import { type AvatarMood } from "@/components/chess/Avatar";
 import { useEngine } from "@/hooks/useEngine";
 import { useSpeaker } from "@/hooks/useSpeaker";
-import { getEngine, type AnalysisResult } from "@/lib/engine/stockfish";
+import { getEngine } from "@/lib/engine/stockfish";
 import { uciLineToSan, uciToSan } from "@/lib/engine/uciToSan";
 import { extractFeatures } from "@/lib/coach/featureExtractor";
 import { retrievePrinciples } from "@/lib/coach/theoryBank";
-import { topWeaknesses, recentPoints, recordMove } from "@/lib/memory";
+import { topWeaknesses, recentPoints, recentHeadlines, recordMove } from "@/lib/memory";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ChevronLeft, ChevronRight, RotateCcw, FlipVertical, BookOpen, Crown, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -39,8 +40,9 @@ type Difficulty = "beginner" | "intermediate" | "advanced" | "master";
 
 const SKILL: Record<Difficulty, number> = { beginner: 3, intermediate: 8, advanced: 14, master: 20 };
 const MOVETIME: Record<Difficulty, number> = { beginner: 250, intermediate: 600, advanced: 1100, master: 1600 };
-const ANALYSIS_DEPTH = 16;
-const THREAT_STEP_MS = 950;
+const DEPTH_FULL = 16;
+const DEPTH_LIGHT = 12;
+const THREAT_STEP_MS = 1100;
 
 function TutorPage() {
   const gameRef = useRef(new Chess());
@@ -64,11 +66,9 @@ function TutorPage() {
   const [threatArrow, setThreatArrow] = useState<{ from: string; to: string } | null>(null);
   const [mood, setMood] = useState<AvatarMood>("neutral");
 
-  // Threat preview animation state
   const [threatPreview, setThreatPreview] = useState<{
     itemId: string; baseFen: string; moves: string[]; step: number;
   } | null>(null);
-  const threatTimerRef = useRef<number | null>(null);
 
   const translateFn = useServerFn(translateAnalysis);
   const reviewFn = useServerFn(reviewGame);
@@ -79,7 +79,6 @@ function TutorPage() {
   const totalPly = game.history().length;
   const isViewingHistory = viewPly !== 0 && viewPly !== totalPly;
 
-  // Build the game we render. Threat preview overrides history view.
   const viewGame = useMemo(() => {
     if (threatPreview) {
       const g = new Chess(threatPreview.baseFen);
@@ -102,7 +101,7 @@ function TutorPage() {
   const isUsersTurn = game.turn() === userColor && !game.isGameOver();
   const isGameOver = game.isGameOver();
 
-  // Engine analysis of displayed position (skipped during threat preview)
+  // Engine analysis — cancels previous when the displayed FEN changes
   const lastAnalyzedFenRef = useRef<string>("");
   useEffect(() => {
     if (!engineState.ready || threatPreview) return;
@@ -114,7 +113,11 @@ function TutorPage() {
     (async () => {
       try {
         const eng = await getEngine();
-        const res = await eng.analyze(displayedFen, { depth: ANALYSIS_DEPTH, multiPV: 5 });
+        await eng.cancel(); // preempt any in-flight search
+        if (cancelled || lastAnalyzedFenRef.current !== displayedFen) return;
+        // Lower depth while opponent is thinking, full depth otherwise
+        const depth = aiThinking ? DEPTH_LIGHT : DEPTH_FULL;
+        const res = await eng.analyze(displayedFen, { depth, multiPV: 5 });
         if (cancelled || lastAnalyzedFenRef.current !== displayedFen) return;
         const display: DisplayLine[] = res.lines.map((l) => ({
           rank: l.multipv,
@@ -137,9 +140,10 @@ function TutorPage() {
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineState.ready, displayedFen, threatPreview]);
 
-  // AI move — also updates avatar to thinking, then a brief feed entry on play
+  // AI move
   useEffect(() => {
     if (!engineState.ready || threatPreview) return;
     if (isGameOver) return;
@@ -159,7 +163,7 @@ function TutorPage() {
         const to = uci.slice(2, 4);
         const promo = uci.length >= 5 ? uci[4] : undefined;
         let move;
-        try { move = game.move({ from, to, promotion: promo }); } catch { /* fallback below */ }
+        try { move = game.move({ from, to, promotion: promo }); } catch { /* */ }
         if (!move) {
           const legal = game.moves();
           if (legal.length) move = game.move(legal[0]);
@@ -168,7 +172,6 @@ function TutorPage() {
         const lastVerbose = game.history({ verbose: true }).slice(-1)[0];
         setAnnotations((prev) => [...prev, { ply: newPly, san: lastVerbose.san, color: lastVerbose.color }]);
 
-        // Quick feature-extracted reaction (no LLM, low latency)
         const probe = new Chess(game.fen());
         const features = extractFeatures(probe, lastVerbose);
         const quip = buildOppQuip(features.motifs, lastVerbose.san);
@@ -179,7 +182,6 @@ function TutorPage() {
           san: lastVerbose.san,
           text: quip,
         }]);
-        // Mood: concerned if check/forcing, neutral otherwise
         setMood(features.motifs.includes("check") ? "concerned" : features.motifs.includes("capture") ? "concerned" : "neutral");
         setViewPly(0);
         tick();
@@ -194,28 +196,42 @@ function TutorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPly, userColor, isGameOver, engineState.ready]);
 
-  // Trigger review on game over
   useEffect(() => {
     if (!isGameOver || reviewOpen || review) return;
     runReview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isGameOver]);
 
-  // Threat preview ticker
+  // Threat preview ticker — rAF + visibility aware
   useEffect(() => {
-    if (!threatPreview) {
-      if (threatTimerRef.current) { window.clearTimeout(threatTimerRef.current); threatTimerRef.current = null; }
-      return;
-    }
-    if (threatPreview.step >= threatPreview.moves.length) {
-      // Hold final frame, then auto-stop
-      threatTimerRef.current = window.setTimeout(() => setThreatPreview(null), 1500);
-      return () => { if (threatTimerRef.current) window.clearTimeout(threatTimerRef.current); };
-    }
-    threatTimerRef.current = window.setTimeout(() => {
-      setThreatPreview((p) => p ? { ...p, step: p.step + 1 } : null);
-    }, THREAT_STEP_MS);
-    return () => { if (threatTimerRef.current) window.clearTimeout(threatTimerRef.current); };
+    if (!threatPreview) return;
+    let raf = 0;
+    let lastTs = performance.now();
+    let accum = 0;
+    const step = (now: number) => {
+      if (document.hidden) { lastTs = now; raf = requestAnimationFrame(step); return; }
+      accum += now - lastTs;
+      lastTs = now;
+      if (accum >= THREAT_STEP_MS) {
+        accum = 0;
+        setThreatPreview((p) => {
+          if (!p) return p;
+          if (p.step >= p.moves.length) { return null; }
+          return { ...p, step: p.step + 1 };
+        });
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [threatPreview?.itemId]);
+
+  // Auto-stop after final step holds briefly
+  useEffect(() => {
+    if (!threatPreview) return;
+    if (threatPreview.step < threatPreview.moves.length) return;
+    const t = window.setTimeout(() => setThreatPreview(null), 1400);
+    return () => window.clearTimeout(t);
   }, [threatPreview]);
 
   const onDrop = useCallback((args: { sourceSquare: string; targetSquare: string | null }) => {
@@ -245,8 +261,8 @@ function TutorPage() {
     try {
       const eng = await getEngine();
       const [before, after] = await Promise.all([
-        eng.analyze(input.fenBefore, { depth: ANALYSIS_DEPTH, multiPV: 5 }),
-        eng.analyze(input.fenAfter, { depth: Math.max(12, ANALYSIS_DEPTH - 2), multiPV: 1 }),
+        eng.analyze(input.fenBefore, { depth: DEPTH_FULL, multiPV: 5 }),
+        eng.analyze(input.fenAfter, { depth: Math.max(12, DEPTH_FULL - 2), multiPV: 1 }),
       ]);
       const afterTop = after.lines[0];
 
@@ -293,22 +309,24 @@ function TutorPage() {
           threeMoveLineSan: threeMoveLine,
           recurringWeaknesses: topWeaknesses(4),
           recentInsights: recentPoints(3).map((p) => p.insight),
+          recentHeadlines: recentHeadlines(6),
         },
       });
 
-      // Persist learning memory
       recordMove({
         quality: result.quality,
         motifs: features.motifs,
         insight: result.headline,
       });
 
-      // Update move-list annotation
       setAnnotations((prev) => prev.map((x) => x.ply === input.ply ? {
         ...x, quality: result.quality, comment: result.headline,
       } : x));
 
-      // Push to chat feed
+      const captioned = (result.captionedPlies && result.captionedPlies.length > 0)
+        ? result.captionedPlies
+        : threeMoveLine.map((san) => ({ san, caption: "" }));
+
       setFeed((p) => [...p, {
         id: `coach-${input.ply}`,
         kind: "coach",
@@ -319,6 +337,8 @@ function TutorPage() {
         headline: result.headline,
         narrative: result.narrative,
         threeMovesAhead: result.threeMovesAhead,
+        deepen: (result as any).deepen ?? "",
+        captionedPlies: captioned,
         alternatives: result.alternatives,
         referencedPrinciple: result.referencedPrinciple,
         threatLineSan: threeMoveLine,
@@ -385,7 +405,6 @@ function TutorPage() {
     if (!item.threatFen || !item.threatLineSan?.length) return;
     setHoverArrow(null);
     setThreatPreview({ itemId: item.id, baseFen: item.threatFen, moves: item.threatLineSan.slice(0, 3), step: 0 });
-    // step 0 will tick to 1 immediately via the timer effect
     setMood("worried");
   }
   function abortThreatPreview() { setThreatPreview(null); setMood("neutral"); }
@@ -398,15 +417,14 @@ function TutorPage() {
     const last = verbose[verbose.length - 1];
     const isPreview = !!threatPreview;
     return {
-      [last.from]: { background: isPreview ? "oklch(0.55 0.2 25 / 0.28)" : "oklch(0.78 0.12 80 / 0.32)" },
-      [last.to]:   { background: isPreview ? "oklch(0.55 0.2 25 / 0.40)" : "oklch(0.78 0.12 80 / 0.42)" },
+      [last.from]: { background: isPreview ? "var(--color-board-threat)" : "var(--color-board-highlight)" },
+      [last.to]:   { background: isPreview ? "var(--color-board-threat)" : "var(--color-board-highlight)" },
     } as Record<string, React.CSSProperties>;
   }, [viewGame, displayedFen, threatPreview]);
 
   const arrows = useMemo(() => {
     const out: { startSquare: string; endSquare: string; color: string }[] = [];
     if (threatPreview && threatPreview.step < threatPreview.moves.length) {
-      // upcoming move arrow
       try {
         const probe = new Chess(threatPreview.baseFen);
         for (let i = 0; i < threatPreview.step; i++) probe.move(threatPreview.moves[i]);
@@ -430,23 +448,24 @@ function TutorPage() {
     } catch { setHoverArrow(null); }
   };
 
+  const enginePulse = !engineState.ready && !engineState.error;
+  const engineDotClass = engineState.error ? "bg-destructive" : enginePulse ? "bg-warn animate-pulse" : "bg-success";
+  const canReview = annotations.length >= 4;
+
   return (
     <div className="h-[100dvh] flex flex-col bg-background paper-grain overflow-hidden">
-      {/* Slim header */}
-      <header className="border-b border-border bg-card/70 backdrop-blur-md">
-        <div className="max-w-[1500px] mx-auto px-4 lg:px-6 h-12 flex items-center justify-between gap-2">
+      {/* Header */}
+      <header className="border-b border-border bg-card/70 backdrop-blur-md shrink-0">
+        <div className="max-w-[1600px] mx-auto px-3 sm:px-4 lg:px-6 h-12 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
             <Crown className="h-4 w-4 text-accent shrink-0" />
             <h1 className="serif text-lg leading-none">Caïssa</h1>
-            <span className="text-[9px] uppercase tracking-[0.22em] text-muted-foreground mono hidden md:inline">Stockfish 18 · live tutor</span>
-            {!engineState.ready && !engineState.error && (
-              <span className="text-[10px] mono text-muted-foreground italic">loading engine…</span>
-            )}
-            {engineState.error && <span className="text-[10px] mono text-destructive">engine error</span>}
+            <span className={cn("h-1.5 w-1.5 rounded-full ml-1", engineDotClass)} title={engineState.error ?? (enginePulse ? "Engine warming up…" : "Engine ready")} />
+            <span className="text-[9px] uppercase tracking-[0.22em] text-muted-foreground mono hidden md:inline">Stockfish 18</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Select value={difficulty} onValueChange={(v) => setDifficulty(v as Difficulty)}>
-              <SelectTrigger className="w-[128px] h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-[124px] h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="beginner">Beginner</SelectItem>
                 <SelectItem value="intermediate">Intermediate</SelectItem>
@@ -456,9 +475,14 @@ function TutorPage() {
             </Select>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={flipSides} title="Switch sides"><FlipVertical className="h-4 w-4" /></Button>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => reset()} title="New game"><RotateCcw className="h-4 w-4" /></Button>
+            {canReview && (
+              <Button size="sm" variant="outline" className="h-8 hidden sm:inline-flex" onClick={runReview}>
+                <BookOpen className="h-3.5 w-3.5 mr-1.5" /> Review
+              </Button>
+            )}
             <Sheet>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8" title="Engine lines & moves"><BarChart3 className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8 xl:hidden" title="Engine lines & moves"><BarChart3 className="h-4 w-4" /></Button>
               </SheetTrigger>
               <SheetContent side="left" className="w-[360px] sm:w-[400px] p-4 flex flex-col gap-3">
                 <SheetHeader><SheetTitle className="serif">Analysis</SheetTitle></SheetHeader>
@@ -474,7 +498,7 @@ function TutorPage() {
                       onSelect={(p) => setViewPly(p === totalPly ? 0 : p)} />
                   </div>
                 </div>
-                <Button size="sm" onClick={runReview} disabled={annotations.length < 4}>
+                <Button size="sm" onClick={runReview} disabled={!canReview}>
                   <BookOpen className="h-3.5 w-3.5 mr-1.5" /> Game review
                 </Button>
               </SheetContent>
@@ -483,12 +507,14 @@ function TutorPage() {
         </div>
       </header>
 
-      {/* Main split */}
-      <main className="flex-1 min-h-0 max-w-[1500px] w-full mx-auto px-3 lg:px-6 py-3 lg:py-4 flex flex-col lg:flex-row gap-3 lg:gap-5">
+      {/* Main — side-by-side from md (≥768px). Three columns ≥xl. */}
+      <main className="flex-1 min-h-0 max-w-[1600px] w-full mx-auto px-2 sm:px-3 lg:px-6 py-2 sm:py-3 flex flex-col md:flex-row gap-2 md:gap-3 lg:gap-5">
         {/* Board column */}
-        <div className="flex gap-2 lg:gap-3 items-start justify-center flex-shrink-0 lg:flex-1 lg:min-w-0">
-          <EvalBar score={evalScore} />
-          <div className="flex flex-col gap-2 w-full max-w-[min(85vh,640px)]">
+        <div className="flex gap-2 items-stretch justify-center md:flex-1 md:min-w-0">
+          <div className="flex flex-col items-center">
+            <EvalBar score={evalScore} />
+          </div>
+          <div className="flex flex-col gap-1.5 w-full max-w-[min(82dvh,640px)] min-w-0">
             <PlayerLabel name={userColor === "w" ? "Stockfish · Black" : "Stockfish · White"} thinking={aiThinking} />
             <div className="relative">
               <Board
@@ -500,7 +526,7 @@ function TutorPage() {
                 allowDragging={!isViewingHistory && isUsersTurn && !threatPreview}
               />
               {threatPreview && (
-                <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-2 px-3 py-1.5 rounded-md bg-destructive/95 text-destructive-foreground text-xs mono uppercase tracking-widest shadow-lg animate-in fade-in slide-in-from-top-1">
+                <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-2 px-3 py-1.5 rounded-md bg-destructive/95 text-destructive-foreground text-[10px] mono uppercase tracking-widest shadow-lg animate-in fade-in slide-in-from-top-1">
                   <span>What could happen · {Math.min(threatPreview.step + 1, threatPreview.moves.length)}/{threatPreview.moves.length}</span>
                   <button onClick={abortThreatPreview} className="underline underline-offset-2">stop</button>
                 </div>
@@ -516,9 +542,9 @@ function TutorPage() {
           </div>
         </div>
 
-        {/* Chat column — always visible, sized to viewport */}
-        <div className="flex-1 lg:flex-none lg:w-[420px] xl:w-[460px] min-h-0 flex">
-          <div className="flex-1 min-h-[40vh] lg:min-h-0">
+        {/* Chat column */}
+        <div className="md:w-[360px] lg:w-[400px] xl:w-[420px] shrink-0 min-h-0 flex">
+          <div className="flex-1 min-h-[44dvh] md:min-h-0">
             <UnifiedChat
               feed={feed}
               mood={mood}
@@ -528,11 +554,30 @@ function TutorPage() {
               onSpeak={(t) => speaker.speak(t)}
               onPlayThreat={startThreatPreview}
               threatPlayingId={threatPreview?.itemId ?? null}
+              threatStep={threatPreview?.step ?? 0}
               onAbortThreat={abortThreatPreview}
               fen={displayedFen}
               pgn={displayedPgn}
               coachThinking={coachLoading}
             />
+          </div>
+        </div>
+
+        {/* Analysis column — only on xl */}
+        <div className="hidden xl:flex w-[300px] shrink-0 min-h-0 flex-col gap-3">
+          <div className="min-h-0 flex-1">
+            <LinesPanel lines={lines} loading={analysisLoading} onHover={handleLineHover}
+              sideToMove={(displayedFen.split(" ")[1] as "w" | "b") ?? "w"} />
+          </div>
+          <div className="border border-border rounded-lg bg-card flex flex-col flex-1 min-h-0 ink-shadow">
+            <div className="px-3 py-2 border-b border-border flex items-baseline justify-between">
+              <span className="serif text-sm">Moves</span>
+              <span className="mono text-[10px] text-muted-foreground">{totalPly} ply</span>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <MoveList annotations={annotations} currentPly={viewPly === 0 ? totalPly : viewPly}
+                onSelect={(p) => setViewPly(p === totalPly ? 0 : p)} />
+            </div>
           </div>
         </div>
       </main>
@@ -544,9 +589,12 @@ function TutorPage() {
 
 function PlayerLabel({ name, thinking, you }: { name: string; thinking: boolean; you?: boolean }) {
   return (
-    <div className={`flex items-center justify-between px-3 py-1.5 rounded-md text-xs ${you ? "bg-foreground text-background" : "bg-muted"}`}>
+    <div className={cn(
+      "flex items-center justify-between px-3 py-1.5 rounded-md text-xs",
+      you ? "bg-foreground text-background" : "bg-muted"
+    )}>
       <span className="serif text-[13px]">{name}</span>
-      {thinking && <span className="italic mono opacity-70 text-[10px]">thinking…</span>}
+      {thinking && <span className="italic mono opacity-70 text-[10px] animate-pulse">thinking…</span>}
     </div>
   );
 }
@@ -559,7 +607,7 @@ function NavBar({ ply, total, onJump, status }: { ply: number; total: number; on
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onJump(Math.max(0, ply - 1))} disabled={ply === 0}>
           <ChevronLeft className="h-3.5 w-3.5" />
         </Button>
-        <span className="mono text-[11px] text-muted-foreground w-14 text-center">{ply}/{total}</span>
+        <span className="mono text-[11px] text-muted-foreground w-14 text-center tabular-nums">{ply}/{total}</span>
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onJump(Math.min(total, ply + 1))} disabled={ply === total}>
           <ChevronRight className="h-3.5 w-3.5" />
         </Button>
