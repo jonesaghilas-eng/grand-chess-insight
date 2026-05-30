@@ -23,6 +23,7 @@ import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/co
 import { ChevronLeft, ChevronRight, RotateCcw, FlipVertical, BookOpen, Crown, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { AuthMenu } from "@/components/auth/AuthMenu";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -503,6 +504,7 @@ function TutorPage() {
                 </Button>
               </SheetContent>
             </Sheet>
+            <AuthMenu />
           </div>
         </div>
       </header>
