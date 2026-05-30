@@ -14,7 +14,161 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      coach_headlines: {
+        Row: {
+          created_at: string
+          headline: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          headline: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          headline?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      games: {
+        Row: {
+          acpl: number | null
+          created_at: string
+          difficulty: string
+          finished_at: string | null
+          id: string
+          opening_name: string | null
+          pgn: string
+          ply_count: number
+          result: string
+          started_at: string
+          summary_json: Json | null
+          updated_at: string
+          user_color: string
+          user_id: string
+        }
+        Insert: {
+          acpl?: number | null
+          created_at?: string
+          difficulty: string
+          finished_at?: string | null
+          id?: string
+          opening_name?: string | null
+          pgn: string
+          ply_count?: number
+          result: string
+          started_at?: string
+          summary_json?: Json | null
+          updated_at?: string
+          user_color: string
+          user_id: string
+        }
+        Update: {
+          acpl?: number | null
+          created_at?: string
+          difficulty?: string
+          finished_at?: string | null
+          id?: string
+          opening_name?: string | null
+          pgn?: string
+          ply_count?: number
+          result?: string
+          started_at?: string
+          summary_json?: Json | null
+          updated_at?: string
+          user_color?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      move_memory: {
+        Row: {
+          created_at: string
+          game_id: string | null
+          id: string
+          insight: string | null
+          motif: string
+          ply: number | null
+          quality: string
+          user_id: string
+          weight: number
+        }
+        Insert: {
+          created_at?: string
+          game_id?: string | null
+          id?: string
+          insight?: string | null
+          motif: string
+          ply?: number | null
+          quality: string
+          user_id: string
+          weight?: number
+        }
+        Update: {
+          created_at?: string
+          game_id?: string | null
+          id?: string
+          insight?: string | null
+          motif?: string
+          ply?: number | null
+          quality?: string
+          user_id?: string
+          weight?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "move_memory_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          display_name: string | null
+          id: string
+          persona: string
+          preferred_difficulty: string
+          updated_at: string
+          user_id: string
+          voice_enabled: boolean
+          voice_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          persona?: string
+          preferred_difficulty?: string
+          updated_at?: string
+          user_id: string
+          voice_enabled?: boolean
+          voice_id?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          persona?: string
+          preferred_difficulty?: string
+          updated_at?: string
+          user_id?: string
+          voice_enabled?: boolean
+          voice_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
