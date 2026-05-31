@@ -25,6 +25,7 @@ export type CoachFeedItem = {
   referencedPrinciple?: string;
   threatLineSan?: string[];
   threatFen?: string;
+  fenBefore?: string;
   text?: string;
 };
 
@@ -47,6 +48,7 @@ type Props = {
   onToggleVoice: () => void;
   onSpeak: (text: string) => void;
   onPlayThreat: (item: CoachFeedItem) => void;
+  onPlayAlternative: (item: CoachFeedItem, altSan: string) => void;
   threatPlayingId: string | null;
   threatStep?: number;
   onAbortThreat: () => void;
@@ -57,7 +59,7 @@ type Props = {
 
 export function UnifiedChat({
   feed, mood, speaking, voiceEnabled, onToggleVoice, onSpeak,
-  onPlayThreat, threatPlayingId, threatStep, onAbortThreat,
+  onPlayThreat, onPlayAlternative, threatPlayingId, threatStep, onAbortThreat,
   fen, pgn, coachThinking,
 }: Props) {
   const [items, setItems] = useState<CoachFeedItem[]>(feed);
@@ -147,6 +149,7 @@ export function UnifiedChat({
               onSpeak={onSpeak}
               voiceEnabled={voiceEnabled}
               onPlayThreat={onPlayThreat}
+              onPlayAlternative={onPlayAlternative}
               isPlayingThreat={threatPlayingId === it.id}
               threatStep={threatPlayingId === it.id ? threatStep ?? 0 : 0}
               onAbortThreat={onAbortThreat}
@@ -197,12 +200,13 @@ export function UnifiedChat({
 }
 
 function FeedRow({
-  item, onSpeak, voiceEnabled, onPlayThreat, isPlayingThreat, threatStep, onAbortThreat,
+  item, onSpeak, voiceEnabled, onPlayThreat, onPlayAlternative, isPlayingThreat, threatStep, onAbortThreat,
 }: {
   item: CoachFeedItem;
   onSpeak: (text: string) => void;
   voiceEnabled: boolean;
   onPlayThreat: (item: CoachFeedItem) => void;
+  onPlayAlternative: (item: CoachFeedItem, altSan: string) => void;
   isPlayingThreat: boolean;
   threatStep: number;
   onAbortThreat: () => void;
@@ -307,9 +311,17 @@ function FeedRow({
             <Lightbulb className="h-3 w-3" /> Better
           </div>
           {item.alternatives.slice(0, 2).map((a, i) => (
-            <div key={i} className="text-xs flex items-baseline gap-2">
-              <span className="serif text-sm">{a.san}</span>
-              <span className="text-muted-foreground">— {a.why}</span>
+            <div key={i} className="text-xs flex items-baseline gap-2 group">
+              <button
+                onClick={() => item.fenBefore && onPlayAlternative(item, a.san)}
+                disabled={!item.fenBefore}
+                title="Show on the board"
+                className="serif text-sm inline-flex items-center gap-1 px-1.5 py-0.5 -mx-1 rounded hover:bg-success/10 hover:text-success transition-colors disabled:opacity-60"
+              >
+                <Play className="h-2.5 w-2.5 opacity-70" fill="currentColor" />
+                {a.san}
+              </button>
+              <span className="text-muted-foreground flex-1">— {a.why}</span>
             </div>
           ))}
         </div>

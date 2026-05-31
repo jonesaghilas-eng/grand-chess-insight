@@ -68,7 +68,7 @@ function TutorPage() {
   const [mood, setMood] = useState<AvatarMood>("neutral");
 
   const [threatPreview, setThreatPreview] = useState<{
-    itemId: string; baseFen: string; moves: string[]; step: number;
+    itemId: string; baseFen: string; moves: string[]; step: number; kind: "threat" | "better";
   } | null>(null);
 
   const translateFn = useServerFn(translateAnalysis);
@@ -344,6 +344,7 @@ function TutorPage() {
         referencedPrinciple: result.referencedPrinciple,
         threatLineSan: threeMoveLine,
         threatFen: input.fenAfter,
+        fenBefore: input.fenBefore,
       }]);
 
       if ((result.quality === "mistake" || result.quality === "blunder") && opponentBestUci) {
@@ -405,10 +406,30 @@ function TutorPage() {
   function startThreatPreview(item: CoachFeedItem) {
     if (!item.threatFen || !item.threatLineSan?.length) return;
     setHoverArrow(null);
-    setThreatPreview({ itemId: item.id, baseFen: item.threatFen, moves: item.threatLineSan.slice(0, 3), step: 0 });
+    setThreatPreview({ itemId: item.id, baseFen: item.threatFen, moves: item.threatLineSan.slice(0, 3), step: 0, kind: "threat" });
     setMood("worried");
   }
   function abortThreatPreview() { setThreatPreview(null); setMood("neutral"); }
+
+  async function startAlternativePreview(item: CoachFeedItem, altSan: string) {
+    if (!item.fenBefore) return;
+    const id = `${item.id}-alt-${altSan}`;
+    setHoverArrow(null);
+    setMood("thinking");
+    setThreatPreview({ itemId: id, baseFen: item.fenBefore, moves: [altSan], step: 0, kind: "better" });
+    try {
+      const probe = new Chess(item.fenBefore);
+      const m = probe.move(altSan);
+      if (!m) return;
+      const eng = await getEngine();
+      const res = await eng.analyze(probe.fen(), { depth: 12, multiPV: 1 });
+      const replyUci = res.lines[0]?.pv?.[0];
+      if (!replyUci) return;
+      const replySan = uciToSan(probe.fen(), replyUci);
+      if (!replySan) return;
+      setThreatPreview((p) => (p && p.itemId === id && p.step === 0) ? { ...p, moves: [altSan, replySan] } : p);
+    } catch { /* ignore */ }
+  }
 
   const orientation: "white" | "black" = userColor === "w" ? "white" : "black";
 
@@ -416,10 +437,12 @@ function TutorPage() {
     const verbose = viewGame.history({ verbose: true });
     if (verbose.length === 0) return {};
     const last = verbose[verbose.length - 1];
-    const isPreview = !!threatPreview;
+    const previewBg = threatPreview
+      ? (threatPreview.kind === "better" ? "var(--color-board-highlight)" : "var(--color-board-threat)")
+      : "var(--color-board-highlight)";
     return {
-      [last.from]: { background: isPreview ? "var(--color-board-threat)" : "var(--color-board-highlight)" },
-      [last.to]:   { background: isPreview ? "var(--color-board-threat)" : "var(--color-board-highlight)" },
+      [last.from]: { background: previewBg },
+      [last.to]:   { background: previewBg },
     } as Record<string, React.CSSProperties>;
   }, [viewGame, displayedFen, threatPreview]);
 
@@ -431,8 +454,11 @@ function TutorPage() {
         for (let i = 0; i < threatPreview.step; i++) probe.move(threatPreview.moves[i]);
         const next = threatPreview.moves[threatPreview.step];
         const m = probe.move(next);
-        if (m) out.push({ startSquare: m.from, endSquare: m.to, color: "#c0392b" });
-      } catch {}
+        const color = threatPreview.kind === "better"
+          ? (threatPreview.step === 0 ? "#1f8a4c" : "#c9a84c")
+          : "#c0392b";
+        if (m) out.push({ startSquare: m.from, endSquare: m.to, color });
+      } catch { /* ignore */ }
       return out;
     }
     if (hoverArrow) out.push({ startSquare: hoverArrow.from, endSquare: hoverArrow.to, color: "#c9a84c" });
@@ -528,8 +554,13 @@ function TutorPage() {
                 allowDragging={!isViewingHistory && isUsersTurn && !threatPreview}
               />
               {threatPreview && (
-                <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-2 px-3 py-1.5 rounded-md bg-destructive/95 text-destructive-foreground text-[10px] mono uppercase tracking-widest shadow-lg animate-in fade-in slide-in-from-top-1">
-                  <span>What could happen · {Math.min(threatPreview.step + 1, threatPreview.moves.length)}/{threatPreview.moves.length}</span>
+                <div className={cn(
+                  "absolute top-2 left-2 right-2 flex items-center justify-between gap-2 px-3 py-1.5 rounded-md text-[10px] mono uppercase tracking-widest shadow-lg animate-in fade-in slide-in-from-top-1",
+                  threatPreview.kind === "better" ? "bg-success/95 text-background" : "bg-destructive/95 text-destructive-foreground"
+                )}>
+                  <span>
+                    {threatPreview.kind === "better" ? "Better idea" : "What could happen"} · {Math.min(threatPreview.step + 1, threatPreview.moves.length)}/{threatPreview.moves.length}
+                  </span>
                   <button onClick={abortThreatPreview} className="underline underline-offset-2">stop</button>
                 </div>
               )}
@@ -555,6 +586,7 @@ function TutorPage() {
               onToggleVoice={() => speaker.setEnabled((v) => !v)}
               onSpeak={(t) => speaker.speak(t)}
               onPlayThreat={startThreatPreview}
+              onPlayAlternative={startAlternativePreview}
               threatPlayingId={threatPreview?.itemId ?? null}
               threatStep={threatPreview?.step ?? 0}
               onAbortThreat={abortThreatPreview}
