@@ -25,6 +25,7 @@ export type CoachFeedItem = {
   referencedPrinciple?: string;
   threatLineSan?: string[];
   threatFen?: string;
+  fenBefore?: string;
   text?: string;
 };
 
