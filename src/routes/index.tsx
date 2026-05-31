@@ -452,8 +452,11 @@ function TutorPage() {
         for (let i = 0; i < threatPreview.step; i++) probe.move(threatPreview.moves[i]);
         const next = threatPreview.moves[threatPreview.step];
         const m = probe.move(next);
-        if (m) out.push({ startSquare: m.from, endSquare: m.to, color: "#c0392b" });
-      } catch {}
+        const color = threatPreview.kind === "better"
+          ? (threatPreview.step === 0 ? "#1f8a4c" : "#c9a84c")
+          : "#c0392b";
+        if (m) out.push({ startSquare: m.from, endSquare: m.to, color });
+      } catch { /* ignore */ }
       return out;
     }
     if (hoverArrow) out.push({ startSquare: hoverArrow.from, endSquare: hoverArrow.to, color: "#c9a84c" });
