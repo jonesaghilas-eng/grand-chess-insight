@@ -554,8 +554,13 @@ function TutorPage() {
                 allowDragging={!isViewingHistory && isUsersTurn && !threatPreview}
               />
               {threatPreview && (
-                <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-2 px-3 py-1.5 rounded-md bg-destructive/95 text-destructive-foreground text-[10px] mono uppercase tracking-widest shadow-lg animate-in fade-in slide-in-from-top-1">
-                  <span>What could happen · {Math.min(threatPreview.step + 1, threatPreview.moves.length)}/{threatPreview.moves.length}</span>
+                <div className={cn(
+                  "absolute top-2 left-2 right-2 flex items-center justify-between gap-2 px-3 py-1.5 rounded-md text-[10px] mono uppercase tracking-widest shadow-lg animate-in fade-in slide-in-from-top-1",
+                  threatPreview.kind === "better" ? "bg-success/95 text-background" : "bg-destructive/95 text-destructive-foreground"
+                )}>
+                  <span>
+                    {threatPreview.kind === "better" ? "Better idea" : "What could happen"} · {Math.min(threatPreview.step + 1, threatPreview.moves.length)}/{threatPreview.moves.length}
+                  </span>
                   <button onClick={abortThreatPreview} className="underline underline-offset-2">stop</button>
                 </div>
               )}
