@@ -311,9 +311,17 @@ function FeedRow({
             <Lightbulb className="h-3 w-3" /> Better
           </div>
           {item.alternatives.slice(0, 2).map((a, i) => (
-            <div key={i} className="text-xs flex items-baseline gap-2">
-              <span className="serif text-sm">{a.san}</span>
-              <span className="text-muted-foreground">— {a.why}</span>
+            <div key={i} className="text-xs flex items-baseline gap-2 group">
+              <button
+                onClick={() => item.fenBefore && onPlayAlternative(item, a.san)}
+                disabled={!item.fenBefore}
+                title="Show on the board"
+                className="serif text-sm inline-flex items-center gap-1 px-1.5 py-0.5 -mx-1 rounded hover:bg-success/10 hover:text-success transition-colors disabled:opacity-60"
+              >
+                <Play className="h-2.5 w-2.5 opacity-70" fill="currentColor" />
+                {a.san}
+              </button>
+              <span className="text-muted-foreground flex-1">— {a.why}</span>
             </div>
           ))}
         </div>
