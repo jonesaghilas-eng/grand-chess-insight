@@ -68,7 +68,7 @@ function TutorPage() {
   const [mood, setMood] = useState<AvatarMood>("neutral");
 
   const [threatPreview, setThreatPreview] = useState<{
-    itemId: string; baseFen: string; moves: string[]; step: number;
+    itemId: string; baseFen: string; moves: string[]; step: number; kind: "threat" | "better";
   } | null>(null);
 
   const translateFn = useServerFn(translateAnalysis);
