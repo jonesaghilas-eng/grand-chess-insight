@@ -344,6 +344,7 @@ function TutorPage() {
         referencedPrinciple: result.referencedPrinciple,
         threatLineSan: threeMoveLine,
         threatFen: input.fenAfter,
+        fenBefore: input.fenBefore,
       }]);
 
       if ((result.quality === "mistake" || result.quality === "blunder") && opponentBestUci) {
