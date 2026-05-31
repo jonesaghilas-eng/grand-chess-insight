@@ -149,6 +149,7 @@ export function UnifiedChat({
               onSpeak={onSpeak}
               voiceEnabled={voiceEnabled}
               onPlayThreat={onPlayThreat}
+              onPlayAlternative={onPlayAlternative}
               isPlayingThreat={threatPlayingId === it.id}
               threatStep={threatPlayingId === it.id ? threatStep ?? 0 : 0}
               onAbortThreat={onAbortThreat}
