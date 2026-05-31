@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 let currentAudio: HTMLAudioElement | null = null;
 
 export function useSpeaker() {
-  const [enabled, setEnabled] = useState(false);
+  const [enabled, setEnabled] = useState(true);
   const [speaking, setSpeaking] = useState(false);
   const speakFn = useServerFn(speakText);
   const tokenRef = useRef(0);
