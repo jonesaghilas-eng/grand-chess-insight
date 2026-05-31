@@ -405,10 +405,30 @@ function TutorPage() {
   function startThreatPreview(item: CoachFeedItem) {
     if (!item.threatFen || !item.threatLineSan?.length) return;
     setHoverArrow(null);
-    setThreatPreview({ itemId: item.id, baseFen: item.threatFen, moves: item.threatLineSan.slice(0, 3), step: 0 });
+    setThreatPreview({ itemId: item.id, baseFen: item.threatFen, moves: item.threatLineSan.slice(0, 3), step: 0, kind: "threat" });
     setMood("worried");
   }
   function abortThreatPreview() { setThreatPreview(null); setMood("neutral"); }
+
+  async function startAlternativePreview(item: CoachFeedItem, altSan: string) {
+    if (!item.fenBefore) return;
+    const id = `${item.id}-alt-${altSan}`;
+    setHoverArrow(null);
+    setMood("thinking");
+    setThreatPreview({ itemId: id, baseFen: item.fenBefore, moves: [altSan], step: 0, kind: "better" });
+    try {
+      const probe = new Chess(item.fenBefore);
+      const m = probe.move(altSan);
+      if (!m) return;
+      const eng = await getEngine();
+      const res = await eng.analyze(probe.fen(), { depth: 12, multiPV: 1 });
+      const replyUci = res.lines[0]?.pv?.[0];
+      if (!replyUci) return;
+      const replySan = uciToSan(probe.fen(), replyUci);
+      if (!replySan) return;
+      setThreatPreview((p) => (p && p.itemId === id && p.step === 0) ? { ...p, moves: [altSan, replySan] } : p);
+    } catch { /* ignore */ }
+  }
 
   const orientation: "white" | "black" = userColor === "w" ? "white" : "black";
 
