@@ -48,6 +48,7 @@ type Props = {
   onToggleVoice: () => void;
   onSpeak: (text: string) => void;
   onPlayThreat: (item: CoachFeedItem) => void;
+  onPlayAlternative: (item: CoachFeedItem, altSan: string) => void;
   threatPlayingId: string | null;
   threatStep?: number;
   onAbortThreat: () => void;
@@ -58,7 +59,7 @@ type Props = {
 
 export function UnifiedChat({
   feed, mood, speaking, voiceEnabled, onToggleVoice, onSpeak,
-  onPlayThreat, threatPlayingId, threatStep, onAbortThreat,
+  onPlayThreat, onPlayAlternative, threatPlayingId, threatStep, onAbortThreat,
   fen, pgn, coachThinking,
 }: Props) {
   const [items, setItems] = useState<CoachFeedItem[]>(feed);
