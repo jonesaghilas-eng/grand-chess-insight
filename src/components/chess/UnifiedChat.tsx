@@ -200,12 +200,13 @@ export function UnifiedChat({
 }
 
 function FeedRow({
-  item, onSpeak, voiceEnabled, onPlayThreat, isPlayingThreat, threatStep, onAbortThreat,
+  item, onSpeak, voiceEnabled, onPlayThreat, onPlayAlternative, isPlayingThreat, threatStep, onAbortThreat,
 }: {
   item: CoachFeedItem;
   onSpeak: (text: string) => void;
   voiceEnabled: boolean;
   onPlayThreat: (item: CoachFeedItem) => void;
+  onPlayAlternative: (item: CoachFeedItem, altSan: string) => void;
   isPlayingThreat: boolean;
   threatStep: number;
   onAbortThreat: () => void;
