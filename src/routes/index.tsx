@@ -437,10 +437,12 @@ function TutorPage() {
     const verbose = viewGame.history({ verbose: true });
     if (verbose.length === 0) return {};
     const last = verbose[verbose.length - 1];
-    const isPreview = !!threatPreview;
+    const previewBg = threatPreview
+      ? (threatPreview.kind === "better" ? "var(--color-board-highlight)" : "var(--color-board-threat)")
+      : "var(--color-board-highlight)";
     return {
-      [last.from]: { background: isPreview ? "var(--color-board-threat)" : "var(--color-board-highlight)" },
-      [last.to]:   { background: isPreview ? "var(--color-board-threat)" : "var(--color-board-highlight)" },
+      [last.from]: { background: previewBg },
+      [last.to]:   { background: previewBg },
     } as Record<string, React.CSSProperties>;
   }, [viewGame, displayedFen, threatPreview]);
 
