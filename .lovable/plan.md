@@ -1,121 +1,88 @@
-# Caïssa v4 — Memory, Review, Personality
+# Caïssa — next roadmap
 
-Three coordinated waves. They share the same auth + DB foundation, so wave 1 lands first and the other two build on it.
-
----
-
-## Wave 1 — Accounts & persistent cloud memory
-
-Today, everything you teach Caïssa about your play lives in `localStorage` — wipe cookies, switch devices, switch browsers, it's gone. The coach has amnesia. We fix that.
-
-**Auth surface**
-- Google sign-in (Lovable broker) + email/password fallback.
-- Top-right avatar pill: signed-out → "Sign in to remember"; signed-in → initial + menu (profile, sign out, export PGN).
-- Playing while signed-out still works — memory just stays local. On sign-in, we offer "Import your local memory" (one-time merge).
-
-**Database (Lovable Cloud)**
-Four tables, all RLS-scoped to `auth.uid()`:
-- `profiles` — display name, preferred difficulty, voice preference, avatar persona.
-- `games` — pgn, result, user_color, difficulty, started_at, finished_at, opening_name, summary_json (the post-game review payload).
-- `move_memory` — per-move learning points: motif tag, insight text, quality, weight, ply, game_id. This replaces `localStorage` for weaknesses/strengths/headlines.
-- `coach_headlines` — last 6 headlines per user (for no-repeat across sessions, not just within one game).
-
-**Server functions** (TanStack `createServerFn`, all auth-gated):
-- `recordMoveMemory` — called from `coachUserMove` after each annotation.
-- `getMemoryContext` — replaces `topWeaknesses/recentPoints/recentHeadlines` calls in `src/routes/index.tsx`. Returns the same shape so the coach prompt is unchanged.
-- `saveGame` / `getGameHistory` — for the new review surface.
-
-Memory degrades gracefully — when signed-out we still write to localStorage; when signed-in the cloud copy wins.
+You picked 7 features across two axes. Rather than ship them as one mega-PR, I'll sequence them into **3 phases** that each leave the app in a usable, demo-able state. You can stop after any phase.
 
 ---
 
-## Wave 2 — Post-game review, upgraded
+## Phase 1 — Play & language (foundation everything else builds on)
 
-Today's review is a single modal with text. We make it a real artifact.
+Goal: make every game feel different, and let the coach speak your language.
 
-**New review surface (`/review/$gameId` route + sheet from the play screen):**
-- **Quality timeline** — horizontal sparkline across all your moves, colored by quality (green→amber→red). Click any dot to jump the board to that ply.
-- **Theme grouping** — instead of a flat list, group by recurring motif: *"Hanging pieces — 3 moves (12, 18, 24)"*, *"Missed open files — 2 moves"*. Click a theme to step through just those moments.
-- **Critical moment cards** — top 3 turning points with before/after eval, the move you played, the move the engine wanted, and a one-paragraph coach narrative.
-- **Trend strip** — sparkline of your last 10 games' average centipawn loss (only visible when you have ≥3 games saved). The "are you getting better?" answer.
-- **Shareable summary card** — generated image (1200×630) with verdict + key stat for sharing.
+### 1. Adjustable opponent strength + personalities
+- Add a `Difficulty` control on the home screen: ELO slider (300–2800) + persona dropdown (`Balanced`, `Aggressive attacker`, `Solid positional`, `Tricky gambiteer`, `Endgame grinder`).
+- Map ELO → Stockfish `Skill Level` (0–20) + `UCI_LimitStrength` / `UCI_Elo` options; map persona → multipv sampling bias (e.g. attacker picks from top-3 with weight toward sharper eval swings, positional prefers the move closest to top eval, gambiteer accepts -50cp for material imbalance).
+- Persist last-used difficulty + persona to `profiles` (columns already exist for `preferred_difficulty`; add `preferred_persona`).
+- Coach narrative gets a `vsPersona` hint so it can say things like "Against an attacker, you can't leave f7 unguarded."
 
-**Game history list** — `/games` route, simple table: date, opening, result, ACPL, "Open review". Cloud memory's payoff made visible.
+### 2. Multilingual coach (Swedish first)
+- Add `coach_language` to `profiles` (`en`, `sv`, `es`, `fr`, `de`, auto-detect from browser default).
+- Pass language into `translateAnalysis`, `chatAboutPosition`, `reviewGame` system prompts ("Respond in Swedish.").
+- TTS: pick voice per language (ElevenLabs multilingual model `eleven_multilingual_v2` already supports Swedish on Charlie; add a Swedish-native voice option).
+- Language toggle in the header next to the voice button.
 
----
-
-## Wave 3 — Coach voice & personality polish
-
-The coach speaks generically and the avatar only reacts in broad mood states. We sharpen both.
-
-**Persona presets** (user-selectable in profile, default = mentor):
-- *Mentor* — patient, encouraging, Nimzowitsch-style classical references. Current behavior.
-- *Coach* — sharp, terse, GM-style. "That's a tempo. Don't waste it."
-- *Storyteller* — narrative, lyrical, references famous games. "This is the same trap Spassky walked into in '69."
-
-Each persona is a system-prompt block + a different ElevenLabs `voiceId`. Switching is instant — no rebuild of memory.
-
-**Voice fixes**
-- Stop on interrupt (already partially in `useSpeaker`, but the audio element sometimes stays alive on rapid moves — wire a proper `AbortController` and clear queued plays).
-- Per-move-type pacing: blunders get a slower, lower delivery; brilliancies get an excited pitch shift. ElevenLabs `voice_settings` (stability/style) per quality bucket.
-- "Tap to replay" on every coach card — uses cached audio when available so it doesn't re-bill the API.
-
-**Avatar micro-reactions** (currently only switches mood on user's move):
-- **Reacts on every move** — including AI's. Quick 200ms reaction state, then settles to base mood.
-- **Distinct reactions**: capture → quick wince, check → eyes widen, blunder → head dip + eyebrow raise, brilliancy → smile + eye sparkle, time-eating think → slow blink loop.
-- **Breathing always on** — currently the aura ring breathes but the avatar itself is static. Add a 4s subtle vertical drift (1–2px) on the SVG so it feels alive between moves.
-- **Look-at-board** — eyes track the last-move square (left/right/center gaze offset based on file).
+**Ship checkpoint:** you can play a tricky 1400 gambiteer in Swedish.
 
 ---
 
-## Technical Section
+## Phase 2 — Learning loops (turn every game into training material)
 
-**Order of operations** (each wave is independently shippable):
+### 3. Annotated PGN export + shareable game link
+- Add a "Share game" button on the post-game review dialog.
+- Server fn `exportAnnotatedPgn(gameId)` builds standard PGN with NAG codes (`?!`, `?`, `??`, `!`, `!!`) from each move's `quality`, and embeds the coach `headline` + `narrative` as `{ }` comments.
+- Add public route `/g/:shareId` that loads a game by its short ID (new `share_id` text column on `games`, indexed, unique). Page replays the game move-by-move with the coach feed alongside — read-only, no auth.
+- Copy-to-clipboard for both the PGN and the share URL.
 
-### Wave 1 — Auth + cloud memory
-1. **Migration** — `profiles`, `games`, `move_memory`, `coach_headlines` with full RLS + GRANTs + `updated_at` triggers.
-2. **Auth UI** — `/login` route with Google + email/password; `_authenticated` layout route is NOT used (we want playing-while-signed-out). Instead, a `useAuthOptional()` hook + `AuthMenu` component in the header.
-3. **`supabase--configure_social_auth` with `["google"]`** — same turn as the broker integration.
-4. **Server fns** in `src/lib/memory.functions.ts`: `recordMoveMemory`, `getMemoryContext`, `mergeLocalMemory`, `saveGame`, `getGameHistory`. All `.middleware([requireSupabaseAuth])`.
-5. **`src/lib/memory.ts` refactor** — keep the same exported function shapes but add a cloud-first / localStorage-fallback layer. Callers in `src/routes/index.tsx` don't change.
-6. **`attachSupabaseAuth`** — verify it's already wired in `src/start.ts` (it should be from the existing auth-attacher file).
+### 4. Puzzle mode from your own blunders
+- New route `/puzzles`. On load, query `move_memory` for the user's `quality IN ('mistake','blunder')` rows with `game_id` + `ply`.
+- For each, replay the PGN up to that ply, present the position, ask the user to find the move *they should have played* (engine's top line from the original analysis — already stored in `summary_json` after Phase 2.1 below, or recomputed live with Stockfish).
+- Score: correct on first try / hint used / failed. Persist attempts in new `puzzle_attempts` table so we can do spaced repetition (Leitner buckets) and resurface the motifs you keep missing.
+- Group puzzles by motif tag (already extracted in `featureExtractor.ts`).
 
-### Wave 2 — Review
-1. New route `src/routes/_authenticated/games.tsx` (history list) and `src/routes/_authenticated/games.$id.tsx` (deep review). Both call server fns that read `games` + `move_memory`.
-2. `src/components/review/QualityTimeline.tsx` — SVG sparkline, click-to-jump (lifts state up via callback to a shared `<ReviewBoard />`).
-3. `src/components/review/ThemeGroup.tsx`, `CriticalMomentCard.tsx`, `TrendStrip.tsx`.
-4. `src/lib/review.functions.ts` — `generateDeepReview` (extends current `reviewGame` with theme grouping + critical-moment selection logic using existing Stockfish analysis cached during play).
-5. Shareable card — server route `src/routes/api/og/$gameId.ts` returns a 1200×630 SVG (no native image libs — workerd-safe).
-6. End-of-game flow in `src/routes/index.tsx`: replace `ReviewDialog` open with `navigate({ to: '/games/$id' })` for signed-in users; signed-out keeps the dialog.
+### 5. Progress dashboard across games
+- Upgrade `/games` (currently a list) with a top dashboard:
+  - Accuracy trend (line chart, last 20 games)
+  - Motif mastery (radar: tactics / king safety / pawn structure / endgame / opening)
+  - Recurring weaknesses (top 5 from `move_memory` aggregation, with trend arrows)
+  - Total time, games played, win/loss/draw, average ACPL
+- All powered by aggregating existing `games.acpl`, `games.summary_json`, and `move_memory` rows — no new schema beyond an index or two for speed.
 
-### Wave 3 — Voice & personality
-1. `src/lib/personas.ts` — three persona configs (system prompt fragment, voiceId, voice_settings, mood-mapping overrides).
-2. `src/lib/coach.functions.ts` — accept `persona` in input, inject persona block into the LLM system prompt. Cache the result audio in IndexedDB keyed by `(text, voiceId)` for tap-to-replay.
-3. `src/hooks/useSpeaker.tsx` — wire `AbortController`, clear pending plays on new move, expose `replay(audioId)`.
-4. `src/components/chess/Avatar.tsx` — expand `AvatarMood` to include `reaction` states (`wince`, `widen`, `dip`, `sparkle`, `blink`), add the 4s breathing drift, add `lookAt` prop driven by last-move file. New SVG path variants for the reaction states (200ms hold then settle).
-5. In `src/routes/index.tsx`, fire `setMood('wince')` etc. inside the AI-move effect using existing `features.motifs`. Currently only the user-move path sets nuanced moods.
+**Ship checkpoint:** every game generates puzzles + a shareable link, and you can watch yourself improve.
 
-**Files touched**
+---
 
-Wave 1:
-- new: `src/routes/login.tsx`, `src/lib/memory.functions.ts`, `src/components/auth/AuthMenu.tsx`, `src/hooks/useAuthOptional.ts`
-- edited: `src/routes/index.tsx`, `src/lib/memory.ts`, `src/routes/__root.tsx` (auth listener already there — verify)
+## Phase 3 — Opening mastery + visual plans (deep coaching)
 
-Wave 2:
-- new: `src/routes/_authenticated/games.tsx`, `src/routes/_authenticated/games.$id.tsx`, `src/routes/api/og/$gameId.ts`, `src/components/review/*` (4 files), `src/lib/review.functions.ts`
-- edited: `src/routes/index.tsx` (post-game routing), `src/lib/coach.functions.ts` (extended review schema)
+### 6. Opening trainer & repertoire
+- New route `/openings`. Two tabs:
+  - **Repertoire:** pick openings for white (e.g. London, Italian) and black (e.g. Caro-Kann, KID). Persisted to new `repertoire` table.
+  - **Drill:** click an opening → Caïssa plays the main line; you guess each move. Wrong moves trigger coach explanation ("That's the Steinitz Variation — playable but loses tempo because…").
+- Source: bundled JSON of ~50 main openings + variations (ECO codes A00–E99 short list). Each line has SAN moves + one-sentence "what this move accomplishes" caption.
+- Spaced repetition on missed lines, same bucket logic as puzzles.
+- Auto-detect opening from played games (already extracted by `featureExtractor`) and suggest "You played the French 4 times — want to drill it?"
 
-Wave 3:
-- new: `src/lib/personas.ts`
-- edited: `src/components/chess/Avatar.tsx`, `src/hooks/useSpeaker.tsx`, `src/lib/coach.functions.ts`, `src/routes/index.tsx`, `src/styles.css` (breathing keyframes)
+### 7. Visual plan arrows (pawn breaks, piece routes)
+- Extend the existing arrow/preview system on `Board.tsx` to render *plan* overlays in addition to threat/alternative previews:
+  - **Pawn break targets:** yellow arrows from a pawn to its target break square (e.g. f2→f4 in a KID structure).
+  - **Piece reroute paths:** blue dashed multi-segment arrows (e.g. Nb1→d2→f3→g5).
+  - **Weak square overlay:** translucent red dot on holes in the opponent's structure (e.g. d5 in a Sicilian Najdorf).
+- These are computed by a new `extractPlans(fen, phase)` heuristic + LLM polish (Gemini Flash, cached per FEN).
+- Trigger: a new "Show plans" button next to the current "Show threats" preview, plus auto-triggered after the coach's `threeMovesAhead` line ("Here's what that looks like on the board").
+- All overlays use existing animation primitives — same fade-in/scale-in already wired for `threatPreview`.
 
-**Out of scope**
-- iOS native / Capacitor (already discussed and skipped).
-- Engine/board changes (v3 just shipped those).
-- Multiplayer.
+**Ship checkpoint:** Caïssa is a true coach — it shows you what to play, why, and how the position should evolve.
 
-**Verification**
-- Sign in with Google, play a 10-move game, sign out, sign back in on a different browser → recurring weaknesses and recent headlines appear in the coach prompt.
-- Finish a game → land on `/games/$id` with timeline + themes + critical moments.
-- Switch persona to *Coach* → next move's voice + tone audibly different.
-- Watch the avatar across 6 moves → it reacts on the AI's moves too, breathes between, eyes drift.
+---
+
+## Technical notes
+
+- All new server fns follow the existing pattern in `src/lib/*.functions.ts` with `requireSupabaseAuth` middleware where user-scoped.
+- New tables: `puzzle_attempts`, `repertoire`, and a `share_id` + indexes on `games`. Each migration includes the standard 4-step structure (CREATE → GRANT → RLS → POLICY).
+- No edge functions — everything is TanStack server functions, consistent with the current architecture.
+- The share route `/g/:shareId` is public (top-level route, no auth gate) and uses `supabaseAdmin` via a public server fn with explicit safe-column projection (no PII).
+- All UI additions are additive — they don't touch the existing chat/board/coach feed flow on `/`.
+
+---
+
+## What I need from you
+
+**Which phase do you want me to build first?** I'd recommend Phase 1 (small, high impact, and unlocks personality for everything later) — but happy to start anywhere. Or pick individual items à la carte if you'd rather not do a full phase.
