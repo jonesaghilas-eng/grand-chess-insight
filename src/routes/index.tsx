@@ -210,7 +210,7 @@ function TutorPage() {
       try {
         const eng = await getEngine();
         const fen = game.fen();
-        const uci = await eng.bestMove(fen, { skillLevel: SKILL[difficulty], movetimeMs: MOVETIME[difficulty] });
+        const uci = await eng.pickMove(fen, { elo, persona, movetimeMs: eloMovetime(elo) });
         if (cancelled) return;
         if (!uci || uci === "(none)") return;
         const from = uci.slice(0, 2);
