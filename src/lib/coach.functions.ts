@@ -223,6 +223,7 @@ const chatSchema = z.object({
   question: z.string().min(1).max(1000),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).max(20),
   topLines: z.array(z.object({ pvSan: z.array(z.string()), scoreCp: z.number().nullable(), mate: z.number().nullable() })).max(5).optional(),
+  language: languageEnum.default("en"),
 });
 
 export const chatAboutPosition = createServerFn({ method: "POST" })
@@ -232,7 +233,7 @@ export const chatAboutPosition = createServerFn({ method: "POST" })
       ? "Engine top lines:\n" + data.topLines.map((l, i) =>
           `${i + 1}. ${l.pvSan.slice(0, 5).join(" ")} [${l.mate != null ? `mate ${l.mate}` : `${((l.scoreCp ?? 0) / 100).toFixed(2)}`}]`).join("\n")
       : "";
-    const system = `You are a patient elite chess coach. You are GROUNDED in the engine's evaluation — never contradict it. Speak in concrete chess language: name squares, pieces, motifs. Use markdown lists when listing ideas.`;
+    const system = `You are a patient elite chess coach. You are GROUNDED in the engine's evaluation — never contradict it. Speak in concrete chess language: name squares, pieces, motifs. Use markdown lists when listing ideas.${languageInstruction(data.language)}`;
     const user = `FEN: ${data.fen}
 PGN: ${data.pgn}
 ${linesBlock}
@@ -258,6 +259,7 @@ const reviewSchema = z.object({
     quality: z.string(),
     evalDelta: z.number().optional(),
   })),
+  language: languageEnum.default("en"),
 });
 
 export const reviewGame = createServerFn({ method: "POST" })
@@ -276,7 +278,7 @@ export const reviewGame = createServerFn({ method: "POST" })
   "strengths": ["<short>", "..."],
   "improvements": ["<concrete pattern to drill>", "..."],
   "studySuggestions": ["<topic / pattern>", "..."]
-}`;
+}${languageInstruction(data.language)}`;
     const user = `User played: ${data.userColor === "w" ? "White" : "Black"}
 Result: ${data.result}
 Accuracy (computed): ${accuracy}%
