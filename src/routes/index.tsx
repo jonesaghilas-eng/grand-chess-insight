@@ -359,6 +359,8 @@ function TutorPage() {
           },
           principles,
           level: difficulty,
+          language,
+          opponentPersona: PERSONA_LABEL[persona],
           opponentBestReplySan: opponentBestSan,
           threeMoveLineSan: threeMoveLine,
           recurringWeaknesses: topWeaknesses(4),
