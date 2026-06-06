@@ -39,6 +39,21 @@ const lineSchema = z.object({
   pvSan: z.array(z.string()), // PV converted to SAN before sending
 });
 
+const languageEnum = z.enum(["en", "sv", "es", "fr", "de", "pt", "it", "nl"]);
+
+function languageName(code: string): string {
+  return ({
+    en: "English", sv: "Swedish", es: "Spanish", fr: "French",
+    de: "German", pt: "Portuguese", it: "Italian", nl: "Dutch",
+  } as Record<string, string>)[code] ?? "English";
+}
+
+function languageInstruction(code: string): string {
+  if (code === "en") return "";
+  const name = languageName(code);
+  return `\n\nCRITICAL: Respond entirely in ${name}. All headlines, narratives, captions, alternatives, and explanations must be in ${name}. Chess notation (SAN like Nf3, O-O, e4) stays in standard form.`;
+}
+
 const translateSchema = z.object({
   fenBefore: z.string(),
   fenAfter: z.string(),
@@ -57,6 +72,8 @@ const translateSchema = z.object({
   }),
   principles: z.array(z.object({ id: z.string(), text: z.string(), source: z.string().optional() })).max(4),
   level: z.enum(["beginner", "intermediate", "advanced", "master"]),
+  language: languageEnum.default("en"),
+  opponentPersona: z.string().optional(), // e.g. "Aggressive attacker"
   opponentBestReplySan: z.string().optional(), // best engine reply, SAN
   threeMoveLineSan: z.array(z.string()).optional(), // first 3 plies of opponent's plan
   recurringWeaknesses: z.array(z.string()).max(6).optional(),
