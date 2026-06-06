@@ -326,6 +326,7 @@ function qualityToDelta(q: string): number {
 const ttsSchema = z.object({
   text: z.string().min(1).max(2000),
   voiceId: z.string().default("IKne3meq5aSn9XLyUdCD"), // Charlie
+  language: languageEnum.default("en"),
 });
 
 export const speakText = createServerFn({ method: "POST" })
