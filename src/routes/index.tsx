@@ -412,7 +412,7 @@ function TutorPage() {
 
       if (speaker.enabled) {
         const speech = [result.headline, result.narrative].filter(Boolean).join(" ");
-        speaker.speak(speech);
+        speaker.speak(speech, language);
       }
     } catch (e: any) {
       toast.error(e?.message ?? "Coach unavailable");
@@ -454,6 +454,7 @@ function TutorPage() {
         result: game.isCheckmate() ? (game.turn() === userColor ? "loss" : "win") : (game.isDraw() ? "draw" : "ongoing"),
         userColor,
         annotations: userMoveAnnots,
+        language,
       },
     }).then(setReview).catch((e: any) => toast.error(e?.message)).finally(() => setReviewLoading(false));
   }
