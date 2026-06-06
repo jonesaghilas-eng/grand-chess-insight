@@ -69,7 +69,7 @@ export function useSpeaker() {
     setSpeaking(false);
   }
 
-  async function speak(text: string) {
+  async function speak(text: string, language: string = "en") {
     if (!enabled || !text) return;
     // If audio hasn't been unlocked yet, queue the latest line and wait
     // for the first user gesture (handled by the global listener above).
@@ -82,7 +82,7 @@ export function useSpeaker() {
     stop();
     setSpeaking(true);
     try {
-      const { audioBase64 } = await speakFn({ data: { text: text.slice(0, 1500), voiceId: "IKne3meq5aSn9XLyUdCD" } });
+      const { audioBase64 } = await speakFn({ data: { text: text.slice(0, 1500), voiceId: "IKne3meq5aSn9XLyUdCD", language: language as any } });
       if (myToken !== tokenRef.current) return;
       const audio = new Audio(`data:audio/mpeg;base64,${audioBase64}`);
       currentAudio = audio;
