@@ -544,15 +544,47 @@ function TutorPage() {
             <span className="text-[9px] uppercase tracking-[0.22em] text-muted-foreground mono hidden md:inline">Stockfish 18</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Select value={difficulty} onValueChange={(v) => setDifficulty(v as Difficulty)}>
-              <SelectTrigger className="w-[124px] h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="beginner">Beginner</SelectItem>
-                <SelectItem value="intermediate">Intermediate</SelectItem>
-                <SelectItem value="advanced">Advanced</SelectItem>
-                <SelectItem value="master">Master</SelectItem>
-              </SelectContent>
-            </Select>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" title="Opponent strength & style">
+                  <Sliders className="h-3.5 w-3.5" />
+                  <span className="mono tabular-nums">{elo}</span>
+                  <span className="hidden sm:inline text-muted-foreground">· {PERSONA_LABEL[persona].split(" ")[0]}</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-baseline justify-between">
+                    <label className="text-xs mono uppercase tracking-widest text-muted-foreground">Opponent ELO</label>
+                    <span className="serif text-lg tabular-nums">{elo}</span>
+                  </div>
+                  <Slider value={[elo]} min={400} max={2800} step={50} onValueChange={(v) => setElo(v[0])} />
+                  <div className="flex justify-between text-[10px] mono text-muted-foreground"><span>400</span><span>2800</span></div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs mono uppercase tracking-widest text-muted-foreground">Style</label>
+                  <Select value={persona} onValueChange={(v) => setPersona(v as Persona)}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(PERSONA_LABEL) as Persona[]).map((p) => (
+                        <SelectItem key={p} value={p}>{PERSONA_LABEL[p]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs mono uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><Languages className="h-3 w-3" /> Coach language</label>
+                  <Select value={language} onValueChange={(v) => setLanguage(v as CoachLanguage)}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(LANGUAGE_LABEL) as CoachLanguage[]).map((l) => (
+                        <SelectItem key={l} value={l}>{LANGUAGE_LABEL[l]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </PopoverContent>
+            </Popover>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={flipSides} title="Switch sides"><FlipVertical className="h-4 w-4" /></Button>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => reset()} title="New game"><RotateCcw className="h-4 w-4" /></Button>
             {canReview && (
