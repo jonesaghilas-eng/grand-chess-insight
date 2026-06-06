@@ -98,7 +98,13 @@ function TutorPage() {
   const tick = () => force((n) => n + 1);
 
   const [userColor, setUserColor] = useState<"w" | "b">("w");
-  const [difficulty, setDifficulty] = useState<Difficulty>("intermediate");
+  const [elo, setEloState] = useState<number>(() => Number(loadPref("caissa.elo", "1400")) || 1400);
+  const [persona, setPersonaState] = useState<Persona>(() => loadPref<Persona>("caissa.persona", "balanced"));
+  const [language, setLanguageState] = useState<CoachLanguage>(() => loadPref<CoachLanguage>("caissa.lang", detectBrowserLanguage()));
+  const setElo = (v: number) => { setEloState(v); savePref("caissa.elo", String(v)); };
+  const setPersona = (v: Persona) => { setPersonaState(v); savePref("caissa.persona", v); };
+  const setLanguage = (v: CoachLanguage) => { setLanguageState(v); savePref("caissa.lang", v); };
+  const difficulty: Difficulty = useMemo(() => eloToDifficulty(elo), [elo]);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [feed, setFeed] = useState<CoachFeedItem[]>([]);
   const [viewPly, setViewPly] = useState(0);
