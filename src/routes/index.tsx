@@ -20,10 +20,13 @@ import { topWeaknesses, recentPoints, recentHeadlines, recordMove } from "@/lib/
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { ChevronLeft, ChevronRight, RotateCcw, FlipVertical, BookOpen, Crown, BarChart3 } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ChevronLeft, ChevronRight, RotateCcw, FlipVertical, BookOpen, Crown, BarChart3, Sliders, Languages } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { AuthMenu } from "@/components/auth/AuthMenu";
+import type { Persona } from "@/lib/engine/stockfish";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -38,12 +41,56 @@ export const Route = createFileRoute("/")({
 });
 
 type Difficulty = "beginner" | "intermediate" | "advanced" | "master";
+type CoachLanguage = "en" | "sv" | "es" | "fr" | "de" | "pt" | "it" | "nl";
 
-const SKILL: Record<Difficulty, number> = { beginner: 3, intermediate: 8, advanced: 14, master: 20 };
-const MOVETIME: Record<Difficulty, number> = { beginner: 250, intermediate: 600, advanced: 1100, master: 1600 };
+const PERSONA_LABEL: Record<Persona, string> = {
+  balanced: "Balanced",
+  attacker: "Aggressive attacker",
+  positional: "Solid positional",
+  gambiteer: "Tricky gambiteer",
+  grinder: "Endgame grinder",
+};
+
+const LANGUAGE_LABEL: Record<CoachLanguage, string> = {
+  en: "English", sv: "Svenska", es: "Español", fr: "Français",
+  de: "Deutsch", pt: "Português", it: "Italiano", nl: "Nederlands",
+};
+
+function eloToDifficulty(elo: number): Difficulty {
+  if (elo < 1100) return "beginner";
+  if (elo < 1700) return "intermediate";
+  if (elo < 2300) return "advanced";
+  return "master";
+}
+
+function eloMovetime(elo: number): number {
+  // Scale think-time with strength so weak ELOs play snappy and strong ELOs think.
+  if (elo < 1000) return 200;
+  if (elo < 1400) return 400;
+  if (elo < 1800) return 700;
+  if (elo < 2200) return 1100;
+  return 1500;
+}
+
 const DEPTH_FULL = 16;
 const DEPTH_LIGHT = 12;
 const THREAT_STEP_MS = 1100;
+
+function detectBrowserLanguage(): CoachLanguage {
+  if (typeof navigator === "undefined") return "en";
+  const lang = (navigator.language || "en").slice(0, 2).toLowerCase();
+  if (["sv", "es", "fr", "de", "pt", "it", "nl"].includes(lang)) return lang as CoachLanguage;
+  return "en";
+}
+
+function loadPref<T extends string>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try { return (localStorage.getItem(key) as T) ?? fallback; } catch { return fallback; }
+}
+function savePref(key: string, value: string) {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(key, value); } catch { /* */ }
+}
 
 function TutorPage() {
   const gameRef = useRef(new Chess());
