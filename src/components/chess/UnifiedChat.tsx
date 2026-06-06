@@ -55,12 +55,13 @@ type Props = {
   fen: string;
   pgn: string;
   coachThinking: boolean;
+  language?: string;
 };
 
 export function UnifiedChat({
   feed, mood, speaking, voiceEnabled, onToggleVoice, onSpeak,
   onPlayThreat, onPlayAlternative, threatPlayingId, threatStep, onAbortThreat,
-  fen, pgn, coachThinking,
+  fen, pgn, coachThinking, language = "en",
 }: Props) {
   const [items, setItems] = useState<CoachFeedItem[]>(feed);
   const [input, setInput] = useState("");
@@ -90,7 +91,7 @@ export function UnifiedChat({
     try {
       const history = items.filter((i) => i.kind === "user" || i.kind === "assistant").slice(-10)
         .map((i) => ({ role: i.kind === "user" ? "user" as const : "assistant" as const, content: i.text ?? "" }));
-      const res = await askFn({ data: { fen, pgn, question: q, history } });
+      const res = await askFn({ data: { fen, pgn, question: q, history, language: language as any } });
       const reply: CoachFeedItem = { id: `a-${Date.now()}`, kind: "assistant", text: res.reply };
       setItems((p) => [...p, reply]);
       if (voiceEnabled) onSpeak(res.reply);

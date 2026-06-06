@@ -672,7 +672,8 @@ function TutorPage() {
               speaking={speaker.speaking}
               voiceEnabled={speaker.enabled}
               onToggleVoice={() => speaker.setEnabled((v) => !v)}
-              onSpeak={(t) => speaker.speak(t)}
+              onSpeak={(t) => speaker.speak(t, language)}
+              language={language}
               onPlayThreat={startThreatPreview}
               onPlayAlternative={startAlternativePreview}
               threatPlayingId={threatPreview?.itemId ?? null}
