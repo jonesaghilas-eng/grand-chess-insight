@@ -20,10 +20,13 @@ import { topWeaknesses, recentPoints, recentHeadlines, recordMove } from "@/lib/
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { ChevronLeft, ChevronRight, RotateCcw, FlipVertical, BookOpen, Crown, BarChart3 } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ChevronLeft, ChevronRight, RotateCcw, FlipVertical, BookOpen, Crown, BarChart3, Sliders, Languages } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { AuthMenu } from "@/components/auth/AuthMenu";
+import type { Persona } from "@/lib/engine/stockfish";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -38,12 +41,56 @@ export const Route = createFileRoute("/")({
 });
 
 type Difficulty = "beginner" | "intermediate" | "advanced" | "master";
+type CoachLanguage = "en" | "sv" | "es" | "fr" | "de" | "pt" | "it" | "nl";
 
-const SKILL: Record<Difficulty, number> = { beginner: 3, intermediate: 8, advanced: 14, master: 20 };
-const MOVETIME: Record<Difficulty, number> = { beginner: 250, intermediate: 600, advanced: 1100, master: 1600 };
+const PERSONA_LABEL: Record<Persona, string> = {
+  balanced: "Balanced",
+  attacker: "Aggressive attacker",
+  positional: "Solid positional",
+  gambiteer: "Tricky gambiteer",
+  grinder: "Endgame grinder",
+};
+
+const LANGUAGE_LABEL: Record<CoachLanguage, string> = {
+  en: "English", sv: "Svenska", es: "Español", fr: "Français",
+  de: "Deutsch", pt: "Português", it: "Italiano", nl: "Nederlands",
+};
+
+function eloToDifficulty(elo: number): Difficulty {
+  if (elo < 1100) return "beginner";
+  if (elo < 1700) return "intermediate";
+  if (elo < 2300) return "advanced";
+  return "master";
+}
+
+function eloMovetime(elo: number): number {
+  // Scale think-time with strength so weak ELOs play snappy and strong ELOs think.
+  if (elo < 1000) return 200;
+  if (elo < 1400) return 400;
+  if (elo < 1800) return 700;
+  if (elo < 2200) return 1100;
+  return 1500;
+}
+
 const DEPTH_FULL = 16;
 const DEPTH_LIGHT = 12;
 const THREAT_STEP_MS = 1100;
+
+function detectBrowserLanguage(): CoachLanguage {
+  if (typeof navigator === "undefined") return "en";
+  const lang = (navigator.language || "en").slice(0, 2).toLowerCase();
+  if (["sv", "es", "fr", "de", "pt", "it", "nl"].includes(lang)) return lang as CoachLanguage;
+  return "en";
+}
+
+function loadPref<T extends string>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try { return (localStorage.getItem(key) as T) ?? fallback; } catch { return fallback; }
+}
+function savePref(key: string, value: string) {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(key, value); } catch { /* */ }
+}
 
 function TutorPage() {
   const gameRef = useRef(new Chess());
@@ -51,7 +98,13 @@ function TutorPage() {
   const tick = () => force((n) => n + 1);
 
   const [userColor, setUserColor] = useState<"w" | "b">("w");
-  const [difficulty, setDifficulty] = useState<Difficulty>("intermediate");
+  const [elo, setEloState] = useState<number>(() => Number(loadPref("caissa.elo", "1400")) || 1400);
+  const [persona, setPersonaState] = useState<Persona>(() => loadPref<Persona>("caissa.persona", "balanced"));
+  const [language, setLanguageState] = useState<CoachLanguage>(() => loadPref<CoachLanguage>("caissa.lang", detectBrowserLanguage()));
+  const setElo = (v: number) => { setEloState(v); savePref("caissa.elo", String(v)); };
+  const setPersona = (v: Persona) => { setPersonaState(v); savePref("caissa.persona", v); };
+  const setLanguage = (v: CoachLanguage) => { setLanguageState(v); savePref("caissa.lang", v); };
+  const difficulty: Difficulty = useMemo(() => eloToDifficulty(elo), [elo]);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [feed, setFeed] = useState<CoachFeedItem[]>([]);
   const [viewPly, setViewPly] = useState(0);
@@ -157,7 +210,7 @@ function TutorPage() {
       try {
         const eng = await getEngine();
         const fen = game.fen();
-        const uci = await eng.bestMove(fen, { skillLevel: SKILL[difficulty], movetimeMs: MOVETIME[difficulty] });
+        const uci = await eng.pickMove(fen, { elo, persona, movetimeMs: eloMovetime(elo) });
         if (cancelled) return;
         if (!uci || uci === "(none)") return;
         const from = uci.slice(0, 2);
@@ -306,6 +359,8 @@ function TutorPage() {
           },
           principles,
           level: difficulty,
+          language,
+          opponentPersona: PERSONA_LABEL[persona],
           opponentBestReplySan: opponentBestSan,
           threeMoveLineSan: threeMoveLine,
           recurringWeaknesses: topWeaknesses(4),
@@ -357,7 +412,7 @@ function TutorPage() {
 
       if (speaker.enabled) {
         const speech = [result.headline, result.narrative].filter(Boolean).join(" ");
-        speaker.speak(speech);
+        speaker.speak(speech, language);
       }
     } catch (e: any) {
       toast.error(e?.message ?? "Coach unavailable");
@@ -399,6 +454,7 @@ function TutorPage() {
         result: game.isCheckmate() ? (game.turn() === userColor ? "loss" : "win") : (game.isDraw() ? "draw" : "ongoing"),
         userColor,
         annotations: userMoveAnnots,
+        language,
       },
     }).then(setReview).catch((e: any) => toast.error(e?.message)).finally(() => setReviewLoading(false));
   }
@@ -491,15 +547,47 @@ function TutorPage() {
             <span className="text-[9px] uppercase tracking-[0.22em] text-muted-foreground mono hidden md:inline">Stockfish 18</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Select value={difficulty} onValueChange={(v) => setDifficulty(v as Difficulty)}>
-              <SelectTrigger className="w-[124px] h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="beginner">Beginner</SelectItem>
-                <SelectItem value="intermediate">Intermediate</SelectItem>
-                <SelectItem value="advanced">Advanced</SelectItem>
-                <SelectItem value="master">Master</SelectItem>
-              </SelectContent>
-            </Select>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" title="Opponent strength & style">
+                  <Sliders className="h-3.5 w-3.5" />
+                  <span className="mono tabular-nums">{elo}</span>
+                  <span className="hidden sm:inline text-muted-foreground">· {PERSONA_LABEL[persona].split(" ")[0]}</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-baseline justify-between">
+                    <label className="text-xs mono uppercase tracking-widest text-muted-foreground">Opponent ELO</label>
+                    <span className="serif text-lg tabular-nums">{elo}</span>
+                  </div>
+                  <Slider value={[elo]} min={400} max={2800} step={50} onValueChange={(v) => setElo(v[0])} />
+                  <div className="flex justify-between text-[10px] mono text-muted-foreground"><span>400</span><span>2800</span></div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs mono uppercase tracking-widest text-muted-foreground">Style</label>
+                  <Select value={persona} onValueChange={(v) => setPersona(v as Persona)}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(PERSONA_LABEL) as Persona[]).map((p) => (
+                        <SelectItem key={p} value={p}>{PERSONA_LABEL[p]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs mono uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><Languages className="h-3 w-3" /> Coach language</label>
+                  <Select value={language} onValueChange={(v) => setLanguage(v as CoachLanguage)}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(LANGUAGE_LABEL) as CoachLanguage[]).map((l) => (
+                        <SelectItem key={l} value={l}>{LANGUAGE_LABEL[l]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </PopoverContent>
+            </Popover>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={flipSides} title="Switch sides"><FlipVertical className="h-4 w-4" /></Button>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => reset()} title="New game"><RotateCcw className="h-4 w-4" /></Button>
             {canReview && (
@@ -584,7 +672,8 @@ function TutorPage() {
               speaking={speaker.speaking}
               voiceEnabled={speaker.enabled}
               onToggleVoice={() => speaker.setEnabled((v) => !v)}
-              onSpeak={(t) => speaker.speak(t)}
+              onSpeak={(t) => speaker.speak(t, language)}
+              language={language}
               onPlayThreat={startThreatPreview}
               onPlayAlternative={startAlternativePreview}
               threatPlayingId={threatPreview?.itemId ?? null}

@@ -39,6 +39,21 @@ const lineSchema = z.object({
   pvSan: z.array(z.string()), // PV converted to SAN before sending
 });
 
+const languageEnum = z.enum(["en", "sv", "es", "fr", "de", "pt", "it", "nl"]);
+
+function languageName(code: string): string {
+  return ({
+    en: "English", sv: "Swedish", es: "Spanish", fr: "French",
+    de: "German", pt: "Portuguese", it: "Italian", nl: "Dutch",
+  } as Record<string, string>)[code] ?? "English";
+}
+
+function languageInstruction(code: string): string {
+  if (code === "en") return "";
+  const name = languageName(code);
+  return `\n\nCRITICAL: Respond entirely in ${name}. All headlines, narratives, captions, alternatives, and explanations must be in ${name}. Chess notation (SAN like Nf3, O-O, e4) stays in standard form.`;
+}
+
 const translateSchema = z.object({
   fenBefore: z.string(),
   fenAfter: z.string(),
@@ -57,6 +72,8 @@ const translateSchema = z.object({
   }),
   principles: z.array(z.object({ id: z.string(), text: z.string(), source: z.string().optional() })).max(4),
   level: z.enum(["beginner", "intermediate", "advanced", "master"]),
+  language: languageEnum.default("en"),
+  opponentPersona: z.string().optional(), // e.g. "Aggressive attacker"
   opponentBestReplySan: z.string().optional(), // best engine reply, SAN
   threeMoveLineSan: z.array(z.string()).optional(), // first 3 plies of opponent's plan
   recurringWeaknesses: z.array(z.string()).max(6).optional(),
@@ -128,7 +145,7 @@ Return JSON ONLY (no markdown), matching this exact shape:
   "referencedPrinciple": "<short attribution like 'Nimzowitsch — prophylaxis' or empty string>",
   "personaTone": "<one of: pleased, neutral, concerned, worried, impressed>"
 }
-If there is no forcing 3-ply line, return captionedPlies as an empty array.`;
+If there is no forcing 3-ply line, return captionedPlies as an empty array.${languageInstruction(data.language)}`;
 
     const user = `LEVEL: ${data.level}
 PHASE: ${data.features.phase} (move ${Math.ceil((data.pgn.split(/\s+/).length) / 3)})
@@ -147,6 +164,7 @@ POSITION FEATURES:
 - hanging pieces: ${data.features.hangingPieces.length ? data.features.hangingPieces.map((h) => `${h.color}${h.piece}@${h.square}`).join(", ") : "none"}
 ${data.opponentBestReplySan ? `- opponent's best reply (engine): ${data.opponentBestReplySan}` : ""}
 ${data.threeMoveLineSan?.length ? `- forcing continuation: ${data.threeMoveLineSan.join(" ")}` : ""}
+${data.opponentPersona ? `- OPPONENT STYLE: ${data.opponentPersona} — when relevant, mention how this style shapes the threat.` : ""}
 
 RELEVANT PRINCIPLES (use 0–1, weave in naturally):
 ${principlesBlock}
@@ -205,6 +223,7 @@ const chatSchema = z.object({
   question: z.string().min(1).max(1000),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).max(20),
   topLines: z.array(z.object({ pvSan: z.array(z.string()), scoreCp: z.number().nullable(), mate: z.number().nullable() })).max(5).optional(),
+  language: languageEnum.default("en"),
 });
 
 export const chatAboutPosition = createServerFn({ method: "POST" })
@@ -214,7 +233,7 @@ export const chatAboutPosition = createServerFn({ method: "POST" })
       ? "Engine top lines:\n" + data.topLines.map((l, i) =>
           `${i + 1}. ${l.pvSan.slice(0, 5).join(" ")} [${l.mate != null ? `mate ${l.mate}` : `${((l.scoreCp ?? 0) / 100).toFixed(2)}`}]`).join("\n")
       : "";
-    const system = `You are a patient elite chess coach. You are GROUNDED in the engine's evaluation — never contradict it. Speak in concrete chess language: name squares, pieces, motifs. Use markdown lists when listing ideas.`;
+    const system = `You are a patient elite chess coach. You are GROUNDED in the engine's evaluation — never contradict it. Speak in concrete chess language: name squares, pieces, motifs. Use markdown lists when listing ideas.${languageInstruction(data.language)}`;
     const user = `FEN: ${data.fen}
 PGN: ${data.pgn}
 ${linesBlock}
@@ -240,6 +259,7 @@ const reviewSchema = z.object({
     quality: z.string(),
     evalDelta: z.number().optional(),
   })),
+  language: languageEnum.default("en"),
 });
 
 export const reviewGame = createServerFn({ method: "POST" })
@@ -258,7 +278,7 @@ export const reviewGame = createServerFn({ method: "POST" })
   "strengths": ["<short>", "..."],
   "improvements": ["<concrete pattern to drill>", "..."],
   "studySuggestions": ["<topic / pattern>", "..."]
-}`;
+}${languageInstruction(data.language)}`;
     const user = `User played: ${data.userColor === "w" ? "White" : "Black"}
 Result: ${data.result}
 Accuracy (computed): ${accuracy}%
@@ -306,6 +326,7 @@ function qualityToDelta(q: string): number {
 const ttsSchema = z.object({
   text: z.string().min(1).max(2000),
   voiceId: z.string().default("IKne3meq5aSn9XLyUdCD"), // Charlie
+  language: languageEnum.default("en"),
 });
 
 export const speakText = createServerFn({ method: "POST" })
@@ -320,7 +341,8 @@ export const speakText = createServerFn({ method: "POST" })
         headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
         body: JSON.stringify({
           text: data.text,
-          model_id: "eleven_turbo_v2_5",
+          // Multilingual model for non-English; turbo for English (lower latency).
+          model_id: data.language === "en" ? "eleven_turbo_v2_5" : "eleven_multilingual_v2",
           voice_settings: { stability: 0.45, similarity_boost: 0.75, style: 0.35, use_speaker_boost: true, speed: 1.0 },
         }),
       }
