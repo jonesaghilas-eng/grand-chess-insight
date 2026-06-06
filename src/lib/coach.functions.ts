@@ -145,7 +145,7 @@ Return JSON ONLY (no markdown), matching this exact shape:
   "referencedPrinciple": "<short attribution like 'Nimzowitsch — prophylaxis' or empty string>",
   "personaTone": "<one of: pleased, neutral, concerned, worried, impressed>"
 }
-If there is no forcing 3-ply line, return captionedPlies as an empty array.`;
+If there is no forcing 3-ply line, return captionedPlies as an empty array.${languageInstruction(data.language)}`;
 
     const user = `LEVEL: ${data.level}
 PHASE: ${data.features.phase} (move ${Math.ceil((data.pgn.split(/\s+/).length) / 3)})
@@ -164,6 +164,7 @@ POSITION FEATURES:
 - hanging pieces: ${data.features.hangingPieces.length ? data.features.hangingPieces.map((h) => `${h.color}${h.piece}@${h.square}`).join(", ") : "none"}
 ${data.opponentBestReplySan ? `- opponent's best reply (engine): ${data.opponentBestReplySan}` : ""}
 ${data.threeMoveLineSan?.length ? `- forcing continuation: ${data.threeMoveLineSan.join(" ")}` : ""}
+${data.opponentPersona ? `- OPPONENT STYLE: ${data.opponentPersona} — when relevant, mention how this style shapes the threat.` : ""}
 
 RELEVANT PRINCIPLES (use 0–1, weave in naturally):
 ${principlesBlock}
